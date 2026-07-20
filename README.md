@@ -58,7 +58,7 @@ Tên model được hỗ trợ:
 ### Windows
 
 ```bash
-npm ci
+npm install
 npm run dist:win
 ```
 
@@ -70,7 +70,7 @@ Kết quả trong `release/`:
 ### macOS
 
 ```bash
-npm ci
+npm install
 npm run dist:mac:arm64
 # hoặc trên Mac Intel
 npm run dist:mac:x64
@@ -85,9 +85,10 @@ Kết quả trong `release/`:
 
 Workflow `.github/workflows/build-desktop.yml`:
 
-- kiểm tra cú pháp trên Ubuntu;
+- kiểm tra cú pháp và chạy smoke test trên Ubuntu;
 - build Windows trên `windows-latest`;
 - build Apple Silicon trên `macos-15` và Intel trên `macos-15-intel`;
+- chạy smoke test trực tiếp trên từng hệ điều hành trước khi đóng gói;
 - upload installer vào mục **Actions → Artifacts**;
 - khi push tag `v*`, tự tạo GitHub Release và đính kèm installer.
 
@@ -109,4 +110,4 @@ Workflow mặc định xuất file **unsigned**:
 
 ## License
 
-Code ứng dụng: MIT. Xem `THIRD_PARTY_NOTICES.md` trước khi phân phối, đặc biệt với Potrace, Upscayl backend và từng model weight.
+Code ứng dụng: MIT. Xem `THIRD_PARTY_NOTICES.md` trước khi phân phối, đặc biệt với Upscayl backend và từng model weight.
