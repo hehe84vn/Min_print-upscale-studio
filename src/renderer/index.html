@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data:; img-src 'self' file: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+  <title>Print Upscale Studio</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">PU</div>
+        <div><strong>Print Upscale</strong><span>Studio · Local Processing</span></div>
+      </div>
+
+      <nav id="toolNav" class="tool-nav">
+        <button class="nav-item active" data-tool="upscale"><b>01</b><span>AI Upscale<small>NCNN/Vulkan hoặc fallback</small></span></button>
+        <button class="nav-item" data-tool="restore"><b>02</b><span>Restore Safe<small>Khử nhiễu, phục hồi màu</small></span></button>
+        <button class="nav-item" data-tool="vector-logo"><b>03</b><span>Vector Logo<small>Logo màu / line art → SVG</small></span></button>
+        <button class="nav-item" data-tool="text-print"><b>04</b><span>Text Print Safe<small>Tăng nét, giữ nguyên glyph</small></span></button>
+      </nav>
+
+      <section class="engine-card">
+        <div class="card-title"><span>NCNN Engine</span><i id="engineDot"></i></div>
+        <p id="engineStatus">Đang kiểm tra...</p>
+        <div class="engine-actions">
+          <button id="autoDetectBtn" class="secondary">Tự tìm</button>
+          <button id="engineSetupBtn" class="secondary">Chọn binary</button>
+          <button id="modelsSetupBtn" class="secondary">Chọn model</button>
+        </div>
+      </section>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">CÔNG CỤ XỬ LÝ ẢNH LOCAL</p>
+          <h1 id="toolTitle">AI Upscale</h1>
+          <p id="toolDescription">Phóng lớn ảnh bằng backend Upscayl NCNN hoặc Lanczos dự phòng.</p>
+        </div>
+        <div class="privacy-badge">Ảnh không rời khỏi máy</div>
+      </header>
+
+      <section class="content-grid">
+        <div class="preview-panel">
+          <div id="dropZone" class="drop-zone">
+            <div id="emptyState">
+              <div class="upload-icon">＋</div>
+              <h2>Chọn ảnh để bắt đầu</h2>
+              <p>PNG, JPG, WEBP, TIFF hoặc BMP</p>
+              <button id="chooseInputBtn" class="primary">Chọn ảnh</button>
+            </div>
+            <img id="previewImage" alt="Ảnh nguồn" hidden />
+          </div>
+          <div class="file-strip">
+            <span id="inputName">Chưa có file</span>
+            <button id="changeInputBtn" class="text-button">Đổi ảnh</button>
+          </div>
+        </div>
+
+        <aside class="settings-panel">
+          <div class="setting-group common-setting">
+            <label for="scaleSelect">Tỷ lệ đầu ra</label>
+            <select id="scaleSelect">
+              <option value="2">2×</option>
+              <option value="3">3×</option>
+              <option value="4">4×</option>
+            </select>
+          </div>
+
+          <div id="upscaleSettings" class="tool-settings">
+            <div class="setting-group">
+              <label for="modelSelect">Model NCNN</label>
+              <select id="modelSelect">
+                <option value="upscayl-standard-4x">Upscayl Standard</option>
+                <option value="upscayl-lite-4x">Upscayl Lite</option>
+                <option value="high-fidelity-4x">High Fidelity</option>
+                <option value="remacri-4x">Remacri</option>
+                <option value="ultramix-balanced-4x">UltraMix Balanced</option>
+                <option value="ultrasharp-4x">UltraSharp</option>
+                <option value="digital-art-4x">Digital Art</option>
+              </select>
+            </div>
+            <label class="check-row"><input id="useNcnn" type="checkbox" checked /><span>Dùng NCNN/Vulkan</span></label>
+            <label class="check-row"><input id="allowFallback" type="checkbox" checked /><span>Cho phép fallback Lanczos</span></label>
+          </div>
+
+          <div id="restoreSettings" class="tool-settings" hidden>
+            <div class="setting-group"><label>Khử nhiễu <output id="denoiseValue">1</output></label><input id="denoise" type="range" min="0" max="3" value="1" step="1" /></div>
+            <div class="setting-group"><label>Độ bão hòa <output id="saturationValue">1.05</output></label><input id="saturation" type="range" min="0.75" max="1.3" value="1.05" step="0.05" /></div>
+            <div class="setting-group"><label>Tương phản <output id="contrastValue">1.05</output></label><input id="contrast" type="range" min="0.85" max="1.2" value="1.05" step="0.05" /></div>
+          </div>
+
+          <div id="vectorSettings" class="tool-settings" hidden>
+            <div class="notice">VTracer local hỗ trợ cả logo màu và logo một màu. Với logo in ấn, nên dùng ít màu và kiểm tra node sau khi xuất.</div>
+            <div class="setting-group"><label for="colorMode">Chế độ vector</label><select id="colorMode"><option value="color">Màu phẳng</option><option value="binary">Đơn sắc</option></select></div>
+            <div class="setting-group"><label>Ngưỡng đen trắng <output id="thresholdValue">170</output></label><input id="threshold" type="range" min="20" max="235" value="170" step="1" /></div>
+            <div class="setting-group"><label>Loại chi tiết nhỏ <output id="turdValue">4</output></label><input id="turdSize" type="range" min="0" max="20" value="4" step="1" /></div>
+            <label class="check-row"><input id="invertVector" type="checkbox" /><span>Đảo vùng đen/trắng</span></label>
+          </div>
+
+          <div id="textSettings" class="tool-settings" hidden>
+            <div class="notice">Không OCR và không gõ lại chữ; giữ nguyên font, dấu và khoảng cách chữ từ ảnh gốc.</div>
+            <div class="setting-group"><label>Độ nét cạnh chữ <output id="edgeValue">1.2</output></label><input id="edge" type="range" min="0.2" max="2.5" value="1.2" step="0.1" /></div>
+          </div>
+
+          <div class="output-row">
+            <label>File đầu ra</label>
+            <button id="chooseOutputBtn" class="secondary wide"><span id="outputName">Chọn nơi lưu</span></button>
+          </div>
+
+          <button id="runBtn" class="run-button" disabled>Xử lý ảnh</button>
+          <div id="progressWrap" class="progress-wrap" hidden>
+            <div class="progress-track"><div id="progressBar"></div></div>
+            <p id="progressText">Đang xử lý...</p>
+          </div>
+          <div id="resultBox" class="result-box" hidden></div>
+        </aside>
+      </section>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
