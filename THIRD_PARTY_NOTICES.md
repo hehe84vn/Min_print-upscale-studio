@@ -16,13 +16,17 @@ The installer includes the corresponding license text and source/credit links in
 the bundled runtime directory. Print Upscale Studio is not an official Upscayl
 product.
 
-## Real-ESRGAN experimental benchmark runtime and models
+## Real-ESRGAN experimental benchmark model weights
 
-Model Lab V2.1 bundles the official portable NCNN runtime and the following
-models from the Real-ESRGAN project:
+Model Lab V2.1 bundles the following official NCNN model weights from the
+Real-ESRGAN project:
 
 - `realesrnet-x4plus`
 - `realesrgan-x4plus`
+
+The weights are executed by the bundled native Local AI engine for each target
+platform so the Apple Silicon build does not depend on an older Intel-only
+helper binary.
 
 Sources:
 
