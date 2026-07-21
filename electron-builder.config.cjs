@@ -25,7 +25,7 @@ module.exports = {
   ],
   mac: {
     category: 'public.app-category.graphics-design',
-    target: ['dmg', 'zip'],
+    target: ['dmg'],
     artifactName: '${productName}-${version}-mac-${arch}.${ext}',
     minimumSystemVersion: '12.0',
     hardenedRuntime: false,
