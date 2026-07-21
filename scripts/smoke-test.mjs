@@ -1,11 +1,10 @@
 import { createRequire } from 'node:module';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const sharp = require('sharp');
-const { BarcodeFormat, QRCodeWriter } = require('@zxing/library');
 const { inspectImage, processImage } = require('../src/main/services/imageService');
 const { buildPrompt } = require('../src/main/services/aiProviderService');
 const { listPresets } = require('../src/main/services/benchmarkService');
@@ -25,6 +24,9 @@ const sourceSvg = Buffer.from(`
     <text x="8" y="68" font-size="10" fill="black">PACK 01</text>
   </svg>
 `);
+
+const qrText = 'PRINT-UPSCALE-STUDIO-V2.3-CODE-GUARD';
+const qrFixtureBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAAAAklEQVR4AewaftIAAAXYSURBVO3BQY7DSBIEQY+E/v/l2L7OgQUMtRqqO90s/YGklQZJaw2S1hokrTVIWmuQtNYgaa1B0lqDpLUGSWsNktYaJK01SFprkLTWIGmtQdJag6S1BklrDZLWGiStNUhaa5C01iBprUHSWoOktQZJaw2S1hokrTVIWmuQtNYgaa1B0lqDpLUGSWsNktYaJK01SFprkLTWIGmtQdJaLx6WhL+oLXcl4R1teUoS7mrLSRL+orY8ZZC01iBprUHSWoOktQZJaw2S1nrxxdryrZLwjiTc1ZaTJHxKW07a8pS2fKskfKNB0lqDpLUGSWsNktYaJK01SFprkLTWi18sCZ/Slk9qy5UkfFJb7krCSVtOknClLZ+UhE9py280SFprkLTWIGmtQdJag6S1BklrDZLWeqFfJwknbblrCe9Iwkld9xokrTVIWmuQtNYgaa1B0lqDpLUGSWu90COScKUtJ0k4ScJdbTlJwjuScKUt+m8NktYaJK01SFprkLTWIGmtQdJaL36xtvxWbblShE9qy1Pa8pS2fKNB0lqDpLUGSWsNktYaJK01SFprkLTWi+WhL8qCVfacpKEk7acJOFKW97RlpMkXGnLO5Kgf2eQtNYgaa1B0lqDpLUGSWsNktYaJK314mFt2agtV5LwrdpykoRPaYv+vwZJaw2S1hokrTVIWmuQtNYgaa1B0lovHpaEK205ScJJW06ScKUtJ0k4actdbflWSThpy0kSnpKEK215RxJO2vKNBklrDZLWGiStNUhaa5C01iBprRdfLAknbTlJwklbriThpC1PScI72nJXW06ScNKWu5Jw0paTtlxJwklb/qJB0lqDpLUGSWsNktYaJK01SFprkLRW+oOlkvApbXlKEu5qy0kSTtpyVxJO2vIpSThpy180SFprkLTWIGmtQdJag6S1BklrDZLWSn/woCRcactJEp7SlpMk6PdoyzuScFdbnjJIWmuQtNYgaa1B0lqDpLUGSWsNktZ68bC2fEpbPiUJJ225KwlPactGSdhokLTWIGmtQdJag6S1BklrDZLWevGHJeFT2nKShL8oCU9pyzuScFdbTpJw0pZvNEhaa5C01iBprUHSWoOktQZJaw2S1kp/8KAkXGnLSRJO2nJXEt7RlruScNKWkyR8SltOknDSlitJeEdbPiUJJ205ScKVtjxlkLTWIGmtQdJag6S1BklrDZLWGiStlf7gSyXhpC0nSbirLe9Iwl1tOUnCSVtOknClLSdJeEpbTpLwrdryjQZJaw2S1hokrTVIWmuQtNYgaa1B0lrpDx6UhCtteUoS3tGWu5LwW7XlJAnfqC0bDZLWGiStNUhaa5C01iBprUHSWukP9J9LwpW2vCMJJ225koSTtpwk4a62fFISntKWbzRIWmuQtNYgaa1B0lqDpLUGSWsNktZ68bAk/EVtOWnLlSS8oy0nSbgrCSdtOUnCXUk4actdbXlHEk6ScKUtTxkkrTVIWmuQtNYgaa1B0lqDpLUGSWu9+GJt+VZJ+JS2nCThJAknbfmUJHxKW56ShL9okLTWIGmtQdJag6S1BklrDZLWGiSt9eIXS8KntOWTkqB/SsJTknDSlnck4RsNktYaJK01SFprkLTWIGmtQdJaL/SItlxJwklbTpJwVxKe0paTJJy05SQJV9pykoSTtpy05RsNktYaJK01SFprkLTWIGmtQdJag6S1XugRSbjSlqe05R1JuCsJf1USrrTlKYOktQZJaw2S1hokrTVIWmuQtNYgaa0Xv1hbfqu2fKMkvKMtJ0m40pZ3JOGkLZ+ShN9okLTWIGmtQdJag6S1BklrDZLWGiSt9eKLJeGvSsJdbXlHEq605SQJn5KEd7TlriSctOUdSfhGg6S1BklrDZLWGiStNUhaa5C0VvoDSSsNktYaJK01SFprkLTWIGmtQdJag6S1BklrDZLWGiStNUhaa5C01iBprUHSWoOktQZJaw2S1hokrTVIWmuQtNYgaa1B0lqDpLUGSWsNktYaJK01SFprkLTWIGmtQdJa/wMxS5kR1yGMfwAAAABJRU5ErkJggg==';
 
 const settingsService = { read: async () => ({}) };
 const workspace = await mkdtemp(path.join(os.tmpdir(), 'print-upscale-studio-'));
@@ -110,22 +112,8 @@ try {
   }
   console.log(`Semantic protection OK: ${blend.protection.coveragePercent}% combined coverage`);
 
-  const qrText = 'PRINT-UPSCALE-STUDIO-V2.3-CODE-GUARD';
-  const qrSize = 256;
-  const qrHints = new Map();
-  const qrMatrix = new QRCodeWriter().encode(qrText, BarcodeFormat.QR_CODE, qrSize, qrSize, qrHints);
-  const qrPixels = Buffer.alloc(qrSize * qrSize * 3, 255);
-  for (let y = 0; y < qrSize; y += 1) {
-    for (let x = 0; x < qrSize; x += 1) {
-      if (!qrMatrix.get(x, y)) continue;
-      const offset = (y * qrSize + x) * 3;
-      qrPixels[offset] = 0;
-      qrPixels[offset + 1] = 0;
-      qrPixels[offset + 2] = 0;
-    }
-  }
   const qrPath = path.join(workspace, 'code-guard-qr.png');
-  await sharp(qrPixels, { raw: { width: qrSize, height: qrSize, channels: 3 } }).png().toFile(qrPath);
+  await writeFile(qrPath, Buffer.from(qrFixtureBase64, 'base64'));
   const qrDetection = await decodeBarcode(qrPath);
   if (!qrDetection.detected || qrDetection.value !== qrText || qrDetection.formatName !== 'QR_CODE') {
     throw new Error(`QR Code Guard decode failed: ${qrDetection.error || qrDetection.valuePreview || 'unknown'}`);
