@@ -219,6 +219,7 @@ async function restoreBarcodeRegion({ sourcePath, outputPath, region, dpi = 300 
       .withMetadata({ density: dpi })
       .png({ compressionLevel: 7 })
       .toFile(temporaryPath);
+    await fs.rm(outputPath, { force: true });
     await fs.rename(temporaryPath, outputPath);
   } finally {
     await fs.rm(temporaryPath, { force: true });
