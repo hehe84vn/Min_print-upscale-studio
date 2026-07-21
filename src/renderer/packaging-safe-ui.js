@@ -1,7 +1,47 @@
 (() => {
+  function installPhase3Controls() {
+    document.title = 'Print Upscale Studio V2.3 Semantic Guard';
+    const brandVersion = document.querySelector('.brand span');
+    if (brandVersion) brandVersion.textContent = 'Studio V2.3 · Semantic Guard';
+    const labNotice = document.querySelector('#benchmarkSettings .lab-notice');
+    if (labNotice) {
+      labNotice.innerHTML = '<b>Packaging Safe Pro V0.2 · Semantic Guard</b><span>Tách vùng giống chữ/logo khỏi texture, đồng thời kiểm tra và tự phục hồi QR/barcode khi cần.</span>';
+    }
+    const protectionToggle = document.querySelector('.benchmark-protection-toggle');
+    if (!protectionToggle || $('semanticGuardControls')) return;
+
+    const controls = document.createElement('div');
+    controls.id = 'semanticGuardControls';
+    controls.className = 'protection-grid semantic-guard-controls';
+    controls.innerHTML = `
+      <label class="check-row"><input id="semanticProtectionEnabled" type="checkbox" checked /><span>Text/Logo Semantic Protection</span></label>
+      <label class="check-row"><input id="codeGuardEnabled" type="checkbox" checked /><span>QR & Barcode Guard</span></label>
+    `;
+    protectionToggle.insertAdjacentElement('afterend', controls);
+  }
+
   function syncProtectionControls() {
     const enabled = $('protectionEnabled').checked;
     $('protectionSensitivitySetting').hidden = !enabled;
+    $('semanticGuardControls').hidden = !enabled;
+    $('semanticProtectionEnabled').disabled = !enabled;
+    $('codeGuardEnabled').disabled = !enabled;
+  }
+
+  function barcodeStatusText(barcodeGuard) {
+    if (!barcodeGuard || barcodeGuard.status === 'disabled') return null;
+    if (barcodeGuard.status === 'not-detected') return 'không phát hiện QR/barcode';
+    const format = barcodeGuard.source?.format || 'mã';
+    if (barcodeGuard.status === 'pass' && barcodeGuard.restored) return `${format} đã tự phục hồi và đọc lại thành công`;
+    if (barcodeGuard.status === 'pass') return `${format} đọc tốt`;
+    if (barcodeGuard.status === 'mismatch') return `${format} đọc sai nội dung`;
+    if (barcodeGuard.status === 'unreadable') return `${format} không đọc được sau xử lý`;
+    return `${format}: ${barcodeGuard.status}`;
+  }
+
+  async function appendMaskItem(items, label, pathValue, id) {
+    if (!pathValue) return;
+    items.push(await benchmarkItem(label, pathValue, id));
   }
 
   renderBenchmarkResults = async function renderProtectedBenchmarkResults(runResult) {
@@ -12,13 +52,24 @@
 
     for (const result of runResult.results.filter((entry) => entry.outputPath && !entry.error)) {
       items.push(await benchmarkItem(result.label, result.outputPath, result.id));
-      if (result.protection?.maskPath) {
-        items.push(await benchmarkItem(
-          'Packaging Hybrid · Protection Mask',
-          result.protection.maskPath,
-          `${result.id}-protection-mask`
-        ));
-      }
+      await appendMaskItem(
+        items,
+        'Packaging Hybrid · Combined Mask',
+        result.protection?.maskPath,
+        `${result.id}-protection-mask`
+      );
+      await appendMaskItem(
+        items,
+        'Text/Logo Semantic Mask',
+        result.protection?.semantic?.maskPath,
+        `${result.id}-semantic-mask`
+      );
+      await appendMaskItem(
+        items,
+        'QR/Barcode Guard Mask',
+        result.protection?.barcode?.maskPath,
+        `${result.id}-barcode-mask`
+      );
     }
     state.benchmark.items = items;
 
@@ -59,9 +110,13 @@
           formatBytes(result.metadata?.sizeBytes)
         ];
         if (result.protection?.enabled) {
-          parts.push(`mask bảo vệ ${result.protection.coveragePercent}%`);
-          parts.push(`độ nhạy ${result.protection.sensitivity}`);
+          parts.push(`combined mask ${result.protection.coveragePercent}%`);
+          if (result.protection.semantic?.enabled) {
+            parts.push(`text/logo ${result.protection.semantic.coveragePercent}%`);
+          }
         }
+        const codeText = barcodeStatusText(result.barcodeGuard);
+        if (codeText) parts.push(codeText);
         detail.textContent = parts.join(' · ');
       }
       info.append(title, detail);
@@ -71,19 +126,43 @@
       row.append(info, time);
       resultList.append(row);
 
-      if (result.protection?.maskPath) {
+      const maskRows = [
+        {
+          id: `${result.id}-protection-mask`,
+          title: 'Combined Protection Mask',
+          detail: 'Tổng hợp cạnh hình học, vùng text/logo và vùng mã.',
+          value: result.protection?.coveragePercent,
+          path: result.protection?.maskPath
+        },
+        {
+          id: `${result.id}-semantic-mask`,
+          title: 'Text/Logo Semantic Mask',
+          detail: 'Vùng chữ/logo ước lượng theo mật độ nét, hướng stroke và độ phẳng cục bộ.',
+          value: result.protection?.semantic?.coveragePercent,
+          path: result.protection?.semantic?.maskPath
+        },
+        {
+          id: `${result.id}-barcode-mask`,
+          title: 'QR/Barcode Guard Mask',
+          detail: barcodeStatusText(result.barcodeGuard) || 'Vùng QR/barcode được khóa theo ảnh nguồn.',
+          value: result.protection?.barcode?.detection?.format || 'CODE',
+          path: result.protection?.barcode?.maskPath
+        }
+      ];
+
+      for (const mask of maskRows.filter((entry) => entry.path)) {
         const maskRow = document.createElement('div');
         maskRow.className = 'benchmark-result-row';
-        maskRow.dataset.itemId = `${result.id}-protection-mask`;
+        maskRow.dataset.itemId = mask.id;
         const maskInfo = document.createElement('div');
         const maskTitle = document.createElement('strong');
-        maskTitle.textContent = 'Protection Mask';
+        maskTitle.textContent = mask.title;
         const maskDetail = document.createElement('small');
-        maskDetail.textContent = 'Vùng sáng được giữ theo High Fidelity; vùng tối được phép nhận thêm Detail.';
+        maskDetail.textContent = mask.detail;
         maskInfo.append(maskTitle, maskDetail);
-        const maskCoverage = document.createElement('time');
-        maskCoverage.textContent = `${result.protection.coveragePercent}%`;
-        maskRow.append(maskInfo, maskCoverage);
+        const maskValue = document.createElement('time');
+        maskValue.textContent = typeof mask.value === 'number' ? `${mask.value}%` : mask.value;
+        maskRow.append(maskInfo, maskValue);
         resultList.append(maskRow);
       }
     }
@@ -109,7 +188,9 @@
       dpi: Number($('dpiSelect').value),
       blendStrength: Number($('blendStrength').value) / 100,
       protectionEnabled: $('protectionEnabled').checked,
-      protectionSensitivity: Number($('protectionSensitivity').value)
+      protectionSensitivity: Number($('protectionSensitivity').value),
+      semanticProtectionEnabled: $('semanticProtectionEnabled').checked,
+      codeGuardEnabled: $('codeGuardEnabled').checked
     });
 
     state.benchmark.sessionDirectory = result.outputDirectory;
@@ -120,12 +201,16 @@
     const errorCount = result.results.length - successCount;
     const hybrid = result.results.find((entry) => entry.id === 'packaging-hybrid' && entry.protection?.enabled);
     const maskMessage = hybrid
-      ? ` Protection mask phủ ${hybrid.protection.coveragePercent}% ảnh.`
+      ? ` Combined mask phủ ${hybrid.protection.coveragePercent}% ảnh.`
       : '';
-    $('resultBox').classList.toggle('error', successCount === 0);
+    const codeMessage = barcodeStatusText(hybrid?.barcodeGuard);
+    const guardMessage = codeMessage ? ` Code Guard: ${codeMessage}.` : '';
+    const codeFailed = hybrid?.barcodeGuard
+      && ['mismatch', 'unreadable'].includes(hybrid.barcodeGuard.status);
+    $('resultBox').classList.toggle('error', successCount === 0 || Boolean(codeFailed));
     $('resultBox').textContent = errorCount
-      ? `Model Lab hoàn tất ${successCount}/${result.results.length} kết quả. Có ${errorCount} model lỗi.${maskMessage} Đã lưu tại: ${result.outputDirectory}`
-      : `Model Lab hoàn tất ${successCount} kết quả.${maskMessage} Đã lưu tại: ${result.outputDirectory}`;
+      ? `Model Lab hoàn tất ${successCount}/${result.results.length} kết quả. Có ${errorCount} model lỗi.${maskMessage}${guardMessage} Đã lưu tại: ${result.outputDirectory}`
+      : `Model Lab hoàn tất ${successCount} kết quả.${maskMessage}${guardMessage} Đã lưu tại: ${result.outputDirectory}`;
     $('resultBox').hidden = false;
   };
 
@@ -137,7 +222,7 @@
     $('engineDot').classList.toggle('online', ready);
     $('engineStatus').textContent = ready
       ? labReady
-        ? 'Sẵn sàng · Packaging Safe Pro.'
+        ? 'Sẵn sàng · Semantic Guard + Code Guard.'
         : 'Sẵn sàng xử lý local. Thiếu RealESRGAN Detail.'
       : 'Chế độ tương thích đang khả dụng.';
 
@@ -156,6 +241,7 @@
     });
   };
 
+  installPhase3Controls();
   $('protectionEnabled').addEventListener('change', syncProtectionControls);
   bindRange('protectionSensitivity', 'protectionSensitivityValue');
   syncProtectionControls();
