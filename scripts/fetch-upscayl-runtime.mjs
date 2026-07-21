@@ -36,9 +36,10 @@ const root = path.resolve(import.meta.dirname, '..');
 const destination = path.join(root, 'vendor', 'upscayl', `${platform}-${arch}`);
 
 const realEsrganTag = 'v0.2.5.0';
-const realEsrganAssetName = platform === 'win32'
-  ? 'realesrgan-ncnn-vulkan-20220424-windows.zip'
-  : 'realesrgan-ncnn-vulkan-20220424-macos.zip';
+// NCNN .param/.bin weights are platform-independent. The Ubuntu package is
+// used consistently because it contains the complete model folder, while the
+// macOS portable package is intended primarily as an executable bundle.
+const realEsrganAssetName = 'realesrgan-ncnn-vulkan-20220424-ubuntu.zip';
 const realEsrganAssetUrl = `https://github.com/xinntao/Real-ESRGAN/releases/download/${realEsrganTag}/${realEsrganAssetName}`;
 
 if (!['win32', 'darwin'].includes(platform)) {
@@ -184,7 +185,11 @@ async function main() {
 
     for (const model of REAL_ESRGAN_MODELS) {
       if (!realEsrganNamedFiles.has(`${model}.param`) || !realEsrganNamedFiles.has(`${model}.bin`)) {
-        throw new Error(`The official Real-ESRGAN archive does not contain the complete ${model} model.`);
+        const available = [...realEsrganNamedFiles.keys()]
+          .filter((name) => name.endsWith('.param') || name.endsWith('.bin'))
+          .sort()
+          .join(', ');
+        throw new Error(`The official Real-ESRGAN archive does not contain the complete ${model} model. Available model files: ${available || 'none'}`);
       }
     }
 
@@ -220,15 +225,15 @@ async function main() {
       `Release: ${realEsrganTag}`,
       'Source: https://github.com/xinntao/Real-ESRGAN',
       'NCNN source: https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan',
-      `Original asset: ${realEsrganAssetUrl}`,
+      `Model archive: ${realEsrganAssetUrl}`,
       'Models: realesrnet-x4plus, realesrgan-x4plus',
       '',
-      'The Real-ESRGAN weights are executed by the bundled native Local AI engine for the target platform.',
+      'The Real-ESRGAN NCNN weights are platform-independent and are executed by the bundled native Local AI engine for the target platform.',
       'Upscayl and Real-ESRGAN are independent projects. Print Upscale Studio is not an official product of either project.'
     ].join('\n'), 'utf8');
 
     await writeFile(manifestPath, JSON.stringify({
-      schemaVersion: 4,
+      schemaVersion: 5,
       releaseTag: tag,
       assetName,
       assetUrl,
@@ -248,7 +253,8 @@ async function main() {
           assetName: realEsrganAssetName,
           assetUrl: realEsrganAssetUrl,
           models: REAL_ESRGAN_MODELS,
-          runtime: 'bundled-native-local-engine'
+          runtime: 'bundled-native-local-engine',
+          weightsPlatformIndependent: true
         }
       },
       preparedAt: new Date().toISOString()
