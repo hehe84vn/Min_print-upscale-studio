@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data:; img-src 'self' file: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self';" />
-  <title>Print Upscale Studio V2</title>
+  <title>Print Upscale Studio V2.1 Experimental</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -12,7 +12,7 @@
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark">PU</div>
-        <div><strong>Print Upscale</strong><span>Studio V2 · Hybrid AI</span></div>
+        <div><strong>Print Upscale</strong><span>Studio V2.1 · Experimental</span></div>
       </div>
 
       <nav id="toolNav" class="tool-nav">
@@ -21,6 +21,7 @@
         <button class="nav-item" data-tool="restore"><b>03</b><span>Restore Safe<small>Khử nhiễu, phục hồi màu</small></span></button>
         <button class="nav-item" data-tool="text-print"><b>04</b><span>Text & Artwork<small>Tăng nét, giữ nguyên glyph</small></span></button>
         <button class="nav-item" data-tool="vector-logo"><b>05</b><span>Vector Logo<small>Logo màu / line art → SVG</small></span></button>
+        <button class="nav-item lab-nav" data-tool="model-lab"><b>06</b><span>Model Lab <em class="lab-tag">LAB</em><small>So model mới với Photoshop</small></span></button>
       </nav>
 
       <button id="appSettingsBtn" class="settings-button" type="button">
@@ -62,18 +63,18 @@
               </div>
 
               <div id="compareStage" class="compare-stage" hidden>
-                <img id="beforeImage" class="compare-image" alt="Ảnh trước xử lý" />
+                <img id="beforeImage" class="compare-image" alt="Ảnh A" />
                 <div id="afterClip" class="after-clip">
-                  <img id="afterImage" class="compare-image" alt="Ảnh sau xử lý" />
+                  <img id="afterImage" class="compare-image" alt="Ảnh B" />
                 </div>
                 <div id="compareDivider" class="compare-divider"><span>↔</span></div>
               </div>
             </div>
 
             <div id="compareControls" class="compare-controls" hidden>
-              <span>TRƯỚC</span>
+              <span>A</span>
               <input id="compareSlider" type="range" min="0" max="100" value="50" />
-              <span>SAU</span>
+              <span>B</span>
               <button id="showSourceBtn" class="text-button" type="button">Chỉ xem ảnh gốc</button>
             </div>
 
@@ -88,6 +89,21 @@
             <div><small>IN 300 DPI</small><strong id="printInfo">—</strong></div>
             <div><small>ĐỊNH DẠNG</small><strong id="formatInfo">—</strong></div>
             <div><small>DUNG LƯỢNG</small><strong id="sizeInfo">—</strong></div>
+          </section>
+
+          <section id="benchmarkSummaryCard" class="benchmark-summary-card" hidden>
+            <div class="benchmark-summary-head">
+              <div>
+                <p class="eyebrow">MODEL LAB RESULTS</p>
+                <h2>So sánh A/B đồng bộ</h2>
+              </div>
+              <span id="benchmarkFolderName" class="benchmark-folder-name"></span>
+            </div>
+            <div class="benchmark-compare-selects">
+              <div class="setting-group"><label for="benchmarkBeforeSelect">Ảnh A</label><select id="benchmarkBeforeSelect"></select></div>
+              <div class="setting-group"><label for="benchmarkAfterSelect">Ảnh B</label><select id="benchmarkAfterSelect"></select></div>
+            </div>
+            <div id="benchmarkResultList" class="benchmark-result-list"></div>
           </section>
         </div>
 
@@ -201,8 +217,37 @@
             <label class="check-row"><input id="invertVector" type="checkbox" /><span>Đảo vùng đen/trắng</span></label>
           </div>
 
+          <div id="benchmarkSettings" class="tool-settings" hidden>
+            <div class="lab-notice"><b>Experimental · local only</b><span>Chạy cùng một ảnh qua các model để kiểm tra chữ, logo, hình học và texture. Kết quả luôn lưu PNG lossless.</span></div>
+
+            <div class="setting-group">
+              <label>Photoshop Reference <small>không bắt buộc</small></label>
+              <div class="reference-row">
+                <button id="chooseReferenceBtn" class="secondary wide" type="button"><span id="referenceName">Chọn ảnh Photoshop</span></button>
+                <button id="clearReferenceBtn" class="danger-text" type="button" disabled>Xóa</button>
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <label>Model cần chạy</label>
+              <div class="benchmark-grid">
+                <label class="benchmark-option"><input class="benchmark-preset" type="checkbox" value="current-photo" data-models="high-fidelity-4x" /><span><b>Current · High Fidelity</b><small>Ảnh chụp hiện tại</small></span></label>
+                <label class="benchmark-option"><input class="benchmark-preset" type="checkbox" value="current-packaging" data-models="remacri-4x" checked /><span><b>Current · Packaging</b><small>Mốc Remacri hiện tại</small></span></label>
+                <label class="benchmark-option"><input class="benchmark-preset" type="checkbox" value="official-fidelity" data-models="realesrnet-x4plus" checked /><span><b>RealESRNet · Fidelity</b><small>Giữ cấu trúc và hình học</small></span></label>
+                <label class="benchmark-option"><input class="benchmark-preset" type="checkbox" value="official-detail" data-models="realesrgan-x4plus" checked /><span><b>RealESRGAN · Detail</b><small>Tăng texture và độ nét cảm nhận</small></span></label>
+                <label class="benchmark-option"><input class="benchmark-preset" type="checkbox" value="packaging-hybrid" data-models="realesrnet-x4plus,realesrgan-x4plus" checked /><span><b>Packaging Hybrid</b><small>Fidelity + Detail có kiểm soát</small></span></label>
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <label>Detail trong Hybrid <output id="blendStrengthValue">20%</output></label>
+              <input id="blendStrength" type="range" min="5" max="45" value="20" step="5" />
+              <small class="setting-hint">Bao bì nên thử 15–25%. Mức cao hơn dễ tạo halo hoặc làm thay đổi nét chữ.</small>
+            </div>
+          </div>
+
           <div class="output-row">
-            <label>File đầu ra</label>
+            <label id="outputLabel">File đầu ra</label>
             <button id="chooseOutputBtn" class="secondary wide"><span id="outputName">Chọn nơi lưu</span></button>
           </div>
 
