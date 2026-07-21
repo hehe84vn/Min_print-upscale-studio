@@ -1,9 +1,9 @@
 {
   "name": "print-upscale-studio",
-  "version": "0.2.1",
-  "description": "All-in-one local desktop toolkit with bundled Upscayl NCNN/Vulkan runtime, restoration, logo vectorization, print-text enhancement and secure cloud AI provider settings.",
+  "version": "2.0.0",
+  "description": "Hybrid local and cloud AI image enhancement toolkit for print workflows, with secure Gemini and OpenAI BYOK support.",
   "main": "src/main/main.js",
-  "author": "Min",
+  "author": "ngoctunguyenle@gmail.com",
   "license": "MIT",
   "private": true,
   "scripts": {
