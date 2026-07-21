@@ -3,10 +3,16 @@ const path = require('node:path');
 const os = require('node:os');
 const sharp = require('sharp');
 const { runNcnnUpscale } = require('./engineService');
+const { enhanceImage } = require('./aiProviderService');
 
 function ensureScale(value) {
   const scale = Number(value);
   return [2, 3, 4].includes(scale) ? scale : 2;
+}
+
+function ensureDpi(value) {
+  const dpi = Number(value);
+  return [150, 200, 300].includes(dpi) ? dpi : 300;
 }
 
 async function dimensions(inputPath, scale) {
@@ -18,18 +24,37 @@ async function dimensions(inputPath, scale) {
   };
 }
 
+async function writeRaster(pipeline, outputPath, options = {}) {
+  const extension = path.extname(outputPath).toLowerCase();
+  const dpi = ensureDpi(options.dpi);
+  let output = pipeline.withMetadata({ density: dpi });
+
+  if (['.jpg', '.jpeg'].includes(extension)) {
+    output = output.jpeg({ quality: Math.max(70, Math.min(100, Number(options.quality ?? 95))), chromaSubsampling: '4:4:4' });
+  } else if (['.tif', '.tiff'].includes(extension)) {
+    output = output.tiff({ compression: 'lzw', quality: 100 });
+  } else if (extension === '.webp') {
+    output = output.webp({ quality: Math.max(70, Math.min(100, Number(options.quality ?? 95))) });
+  } else {
+    output = output.png({ compressionLevel: 7 });
+  }
+
+  await output.toFile(outputPath);
+  return outputPath;
+}
+
 async function upscaleFallback(inputPath, outputPath, scale, options, onProgress) {
   const size = await dimensions(inputPath, scale);
-  onProgress?.(15);
+  onProgress?.(15, 'Đang phóng lớn bằng chế độ tương thích');
   let pipeline = sharp(inputPath, { failOn: 'none' })
     .rotate()
     .resize(size.width, size.height, { kernel: sharp.kernel.lanczos3 });
 
   if (options.sharpen !== false) pipeline = pipeline.sharpen({ sigma: 1.1, m1: 0.8, m2: 2.2 });
 
-  onProgress?.(70);
-  await pipeline.png({ compressionLevel: 7 }).toFile(outputPath);
-  onProgress?.(100);
+  onProgress?.(70, 'Đang hoàn thiện ảnh');
+  await writeRaster(pipeline, outputPath, options);
+  onProgress?.(100, 'Hoàn tất');
   return outputPath;
 }
 
@@ -37,17 +62,30 @@ async function upscale({ settingsService, inputPath, outputPath, options, onProg
   const scale = ensureScale(options.scale);
   if (options.useNcnn !== false) {
     try {
-      return await runNcnnUpscale({
+      const tempPng = path.extname(outputPath).toLowerCase() === '.png'
+        ? outputPath
+        : path.join(os.tmpdir(), `local-enhance-${Date.now()}-${Math.random().toString(16).slice(2)}.png`);
+
+      await runNcnnUpscale({
         settingsService,
         inputPath,
-        outputPath,
-        model: options.model || 'upscayl-standard-4x',
+        outputPath: tempPng,
+        model: options.model || 'high-fidelity-4x',
         scale,
         onProgress
       });
+
+      if (tempPng !== outputPath) {
+        try {
+          await writeRaster(sharp(tempPng, { failOn: 'none' }), outputPath, options);
+        } finally {
+          await fs.rm(tempPng, { force: true });
+        }
+      }
+      return outputPath;
     } catch (error) {
       if (!options.allowFallback) throw error;
-      onProgress?.(8, `NCNN không chạy: ${error.message}. Chuyển sang Lanczos.`);
+      onProgress?.(8, `Bộ xử lý cục bộ không chạy: ${error.message}. Chuyển sang chế độ tương thích.`);
     }
   }
   return upscaleFallback(inputPath, outputPath, scale, options, onProgress);
@@ -60,7 +98,7 @@ async function restoreSafe({ inputPath, outputPath, options, onProgress }) {
   const saturation = Math.max(0.5, Math.min(1.5, Number(options.saturation ?? 1.05)));
   const contrast = Math.max(0.8, Math.min(1.3, Number(options.contrast ?? 1.05)));
 
-  onProgress?.(10);
+  onProgress?.(10, 'Đang khử nhiễu');
   let pipeline = sharp(inputPath, { failOn: 'none' }).rotate();
   if (denoise > 0) pipeline = pipeline.median(denoise === 1 ? 3 : 5);
 
@@ -71,9 +109,9 @@ async function restoreSafe({ inputPath, outputPath, options, onProgress }) {
     .linear(contrast, -(contrast - 1) * 128)
     .sharpen({ sigma: 1.15, m1: 0.75, m2: 2.1 });
 
-  onProgress?.(75);
-  await pipeline.png({ compressionLevel: 7 }).toFile(outputPath);
-  onProgress?.(100);
+  onProgress?.(75, 'Đang hoàn thiện màu và độ nét');
+  await writeRaster(pipeline, outputPath, options);
+  onProgress?.(100, 'Hoàn tất');
   return outputPath;
 }
 
@@ -82,15 +120,15 @@ async function textPrintSafe({ inputPath, outputPath, options, onProgress }) {
   const size = await dimensions(inputPath, scale);
   const edge = Math.max(0.2, Math.min(2.5, Number(options.edge ?? 1.2)));
 
-  onProgress?.(15);
-  await sharp(inputPath, { failOn: 'none' })
+  onProgress?.(15, 'Đang phân tích cạnh chữ');
+  const pipeline = sharp(inputPath, { failOn: 'none' })
     .rotate()
     .resize(size.width, size.height, { kernel: sharp.kernel.lanczos3 })
     .sharpen({ sigma: edge, m1: 1.0, m2: 2.5 })
-    .linear(1.035, -3)
-    .png({ compressionLevel: 7 })
-    .toFile(outputPath);
-  onProgress?.(100);
+    .linear(1.035, -3);
+
+  await writeRaster(pipeline, outputPath, options);
+  onProgress?.(100, 'Hoàn tất');
   return outputPath;
 }
 
@@ -100,7 +138,7 @@ async function vectorLogo({ inputPath, outputPath, options, onProgress }) {
   const tempPath = path.join(os.tmpdir(), `vector-input-${Date.now()}-${Math.random().toString(16).slice(2)}.png`);
 
   try {
-    onProgress?.(10);
+    onProgress?.(10, 'Đang làm sạch ảnh nguồn');
     let pipeline = sharp(inputPath, { failOn: 'none' })
       .rotate()
       .flatten({ background: '#ffffff' })
@@ -112,7 +150,7 @@ async function vectorLogo({ inputPath, outputPath, options, onProgress }) {
     }
     await pipeline.png().toFile(tempPath);
 
-    onProgress?.(45);
+    onProgress?.(45, 'Đang dựng đường vector');
     const { vectorize, optimize, ColorMode, Hierarchical, PathSimplifyMode } = await import('@neplex/vectorizer');
     const source = await fs.readFile(tempPath);
     const svg = await vectorize(source, {
@@ -129,7 +167,7 @@ async function vectorLogo({ inputPath, outputPath, options, onProgress }) {
       pathPrecision: 3
     });
 
-    onProgress?.(80);
+    onProgress?.(80, 'Đang tối ưu SVG');
     const optimized = await optimize(svg, {
       plugins: ['preset-default', { name: 'removeTitle' }],
       multipass: true,
@@ -137,31 +175,95 @@ async function vectorLogo({ inputPath, outputPath, options, onProgress }) {
     });
 
     await fs.writeFile(outputPath, optimized, 'utf8');
-    onProgress?.(100);
+    onProgress?.(100, 'Hoàn tất');
     return outputPath;
   } finally {
     await fs.rm(tempPath, { force: true });
   }
 }
 
+async function aiEnhance({ secureSecretsService, inputPath, outputPath, options, onProgress }) {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'print-ai-enhance-'));
+  const normalizedInput = path.join(workspace, 'cloud-input.png');
+
+  try {
+    onProgress?.(8, 'Đang chuẩn hóa ảnh trước khi gửi AI');
+    await sharp(inputPath, { failOn: 'none' })
+      .rotate()
+      .resize({ width: 4096, height: 4096, fit: 'inside', withoutEnlargement: true })
+      .png({ compressionLevel: 6 })
+      .toFile(normalizedInput);
+
+    onProgress?.(20, 'Đang gửi ảnh tới AI Cloud');
+    const result = await enhanceImage({
+      secureSecretsService,
+      provider: options.provider,
+      inputPath: normalizedInput,
+      options
+    });
+
+    onProgress?.(82, 'Đã nhận ảnh, đang hoàn thiện đầu ra');
+    let pipeline = sharp(result.buffer, { failOn: 'none' }).rotate();
+    if (options.finishSharpen !== false) {
+      pipeline = pipeline.sharpen({ sigma: 0.75, m1: 0.35, m2: 1.2 });
+    }
+    await writeRaster(pipeline, outputPath, options);
+    onProgress?.(100, `Hoàn tất bằng ${result.provider === 'gemini' ? 'Gemini' : 'OpenAI'}`);
+    return outputPath;
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+}
+
+async function inspectImage(inputPath) {
+  const [metadata, file] = await Promise.all([
+    sharp(inputPath, { failOn: 'none' }).metadata(),
+    fs.stat(inputPath)
+  ]);
+  if (!metadata.width || !metadata.height) throw new Error('Không đọc được thông tin ảnh.');
+
+  const printSizes = {};
+  for (const dpi of [150, 200, 300]) {
+    printSizes[dpi] = {
+      widthCm: Number(((metadata.width / dpi) * 2.54).toFixed(1)),
+      heightCm: Number(((metadata.height / dpi) * 2.54).toFixed(1))
+    };
+  }
+
+  return {
+    width: metadata.width,
+    height: metadata.height,
+    format: metadata.format || path.extname(inputPath).slice(1),
+    colorSpace: metadata.space || 'unknown',
+    channels: metadata.channels || null,
+    density: metadata.density || null,
+    sizeBytes: file.size,
+    printSizes
+  };
+}
+
 async function processImage(payload) {
   if (payload.operation === 'upscale') return upscale(payload);
+  if (payload.operation === 'ai-enhance') return aiEnhance(payload);
   if (payload.operation === 'restore') return restoreSafe(payload);
   if (payload.operation === 'text-print') return textPrintSafe(payload);
   if (payload.operation === 'vector-logo') return vectorLogo(payload);
   throw new Error(`Unknown operation: ${payload.operation}`);
 }
 
-function suggestedOutput(inputPath, operation) {
+function suggestedOutput(inputPath, operation, extension = null) {
   const parsed = path.parse(inputPath);
   const suffixes = {
-    upscale: 'upscaled',
+    upscale: 'local-enhanced',
+    'ai-enhance': 'ai-enhanced',
     restore: 'restored',
     'text-print': 'text-print',
     'vector-logo': 'vector'
   };
-  const extension = operation === 'vector-logo' ? '.svg' : '.png';
-  return path.join(parsed.dir, `${parsed.name}-${suffixes[operation] || 'output'}${extension}`);
+  const normalizedExtension = extension && /^\.(png|jpe?g|tiff?|webp)$/i.test(extension)
+    ? extension.toLowerCase()
+    : operation === 'vector-logo' ? '.svg' : '.png';
+  return path.join(parsed.dir, `${parsed.name}-${suffixes[operation] || 'output'}${normalizedExtension}`);
 }
 
-module.exports = { processImage, suggestedOutput };
+module.exports = { inspectImage, processImage, suggestedOutput };
