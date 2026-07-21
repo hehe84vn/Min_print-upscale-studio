@@ -16,17 +16,11 @@ The installer includes the corresponding license text and source/credit links in
 the bundled runtime directory. Print Upscale Studio is not an official Upscayl
 product.
 
-## Real-ESRGAN experimental benchmark model weights
+## Real-ESRGAN experimental benchmark model weight
 
-Model Lab V2.1 bundles the following official NCNN model weights from the
-Real-ESRGAN project:
-
-- `realesrnet-x4plus`
-- `realesrgan-x4plus`
-
-The weights are executed by the bundled native Local AI engine for each target
-platform so the Apple Silicon build does not depend on an older Intel-only
-helper binary.
+Model Lab bundles the official NCNN `realesrgan-x4plus` model weight from the
+Real-ESRGAN project. The weight is executed by the bundled native Local AI
+engine for each target platform.
 
 Sources:
 
@@ -37,10 +31,22 @@ Real-ESRGAN is licensed under BSD-3-Clause. The installer includes the license
 text and release source information in the bundled runtime directory. Print
 Upscale Studio is not an official Real-ESRGAN product.
 
+## QR and barcode validation
+
+V2.3 uses `@zxing/library` for local multi-format QR and barcode decoding. The
+library is licensed under Apache-2.0 and supports formats including QR Code,
+Data Matrix, Code 128, EAN and UPC.
+
+- https://github.com/zxing-js/library
+
+Code values are processed locally. Benchmark reports store a SHA-256 digest and
+a short preview instead of relying on a remote scanning service.
+
 ## Runtime libraries
 
 - Electron: MIT
 - Sharp: Apache-2.0
+- `@zxing/library`: Apache-2.0
 - `@neplex/vectorizer`: MIT, Node.js bindings based on VTracer
 - VTracer: MIT
 
