@@ -14,8 +14,8 @@
     "runtime:fetch": "node scripts/fetch-upscayl-runtime.mjs",
     "dist": "npm run runtime:fetch && electron-builder --config electron-builder.config.cjs",
     "dist:win": "npm run runtime:fetch -- --platform win32 --arch x64 && electron-builder --config electron-builder.config.cjs --win nsis portable --x64 --publish never",
-    "dist:mac:x64": "npm run runtime:fetch -- --platform darwin --arch x64 && electron-builder --config electron-builder.config.cjs --mac dmg zip --x64 --publish never",
-    "dist:mac:arm64": "npm run runtime:fetch -- --platform darwin --arch arm64 && electron-builder --config electron-builder.config.cjs --mac dmg zip --arm64 --publish never"
+    "dist:mac:x64": "npm run runtime:fetch -- --platform darwin --arch x64 && electron-builder --config electron-builder.config.cjs --mac dmg --x64 --publish never",
+    "dist:mac:arm64": "npm run runtime:fetch -- --platform darwin --arch arm64 && electron-builder --config electron-builder.config.cjs --mac dmg --arm64 --publish never"
   },
   "dependencies": {
     "@neplex/vectorizer": "0.1.0",
