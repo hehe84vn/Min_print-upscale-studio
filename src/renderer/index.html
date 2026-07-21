@@ -22,6 +22,11 @@
         <button class="nav-item" data-tool="text-print"><b>04</b><span>Text Print Safe<small>Tăng nét, giữ nguyên glyph</small></span></button>
       </nav>
 
+      <button id="appSettingsBtn" class="settings-button" type="button">
+        <span>⚙</span>
+        <span>Cài đặt<small>AI Provider & API key</small></span>
+      </button>
+
       <section class="engine-card">
         <div class="card-title"><span>NCNN Engine</span><i id="engineDot"></i></div>
         <p id="engineStatus">Đang kiểm tra...</p>
@@ -123,6 +128,52 @@
       </section>
     </main>
   </div>
+
+  <div id="settingsModal" class="modal-backdrop" hidden>
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <header class="modal-header">
+        <div>
+          <p class="eyebrow">CẤU HÌNH CLOUD AI</p>
+          <h2 id="settingsTitle">AI Provider & API key</h2>
+        </div>
+        <button id="closeSettingsBtn" class="icon-button" type="button" aria-label="Đóng">×</button>
+      </header>
+
+      <div class="notice secure-notice">API key được mã hóa bằng cơ chế bảo mật của macOS hoặc Windows. Khóa không được hiển thị lại và không lưu trong file settings.json.</div>
+
+      <div class="setting-group">
+        <label for="aiProviderSelect">Nhà cung cấp mặc định</label>
+        <select id="aiProviderSelect">
+          <option value="gemini">Google Gemini</option>
+          <option value="openai">OpenAI</option>
+        </select>
+      </div>
+
+      <div class="api-key-card">
+        <div class="api-key-heading">
+          <div><strong>Google Gemini API</strong><small id="geminiKeyStatus">Chưa lưu API key</small></div>
+          <button id="clearGeminiKeyBtn" class="danger-text" type="button">Xóa key</button>
+        </div>
+        <input id="geminiApiKeyInput" class="text-input" type="password" autocomplete="off" spellcheck="false" placeholder="Nhập Gemini API key mới" />
+      </div>
+
+      <div class="api-key-card">
+        <div class="api-key-heading">
+          <div><strong>OpenAI API</strong><small id="openAiKeyStatus">Chưa lưu API key</small></div>
+          <button id="clearOpenAiKeyBtn" class="danger-text" type="button">Xóa key</button>
+        </div>
+        <input id="openAiApiKeyInput" class="text-input" type="password" autocomplete="off" spellcheck="false" placeholder="Nhập OpenAI API key mới" />
+      </div>
+
+      <p id="aiSettingsMessage" class="modal-message" hidden></p>
+
+      <footer class="modal-actions">
+        <button id="cancelSettingsBtn" class="secondary modal-button" type="button">Hủy</button>
+        <button id="saveSettingsBtn" class="primary modal-button" type="button">Lưu cài đặt</button>
+      </footer>
+    </section>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>
