@@ -5,7 +5,7 @@ const os = require('node:os');
 const { spawn } = require('node:child_process');
 const sharp = require('sharp');
 
-const MODELS = [
+const CORE_MODELS = [
   'upscayl-standard-4x',
   'upscayl-lite-4x',
   'high-fidelity-4x',
@@ -14,6 +14,13 @@ const MODELS = [
   'ultrasharp-4x',
   'digital-art-4x'
 ];
+
+const EXPERIMENTAL_MODELS = [
+  'realesrnet-x4plus',
+  'realesrgan-x4plus'
+];
+
+const MODELS = [...CORE_MODELS, ...EXPERIMENTAL_MODELS];
 
 function exists(target) {
   try {
@@ -115,9 +122,12 @@ async function getStatus(settingsService) {
     engineBinary: resolved.engineBinary,
     modelsDirectory: resolved.modelsDirectory,
     availableModels,
+    coreModels: CORE_MODELS,
+    experimentalModels: EXPERIMENTAL_MODELS,
     expectedModels: MODELS,
     runtimeVersion: manifest?.releaseTag || null,
-    runtimeAsset: manifest?.assetName || null
+    runtimeAsset: manifest?.assetName || null,
+    modelSources: manifest?.modelSources || null
   };
 }
 
@@ -172,7 +182,7 @@ async function runNcnnUpscale({ settingsService, inputPath, outputPath, model, s
   const args = ['-i', inputPath, '-o', tempOutput, '-n', model, '-m', status.modelsDirectory, '-s', '4', '-f', 'png'];
 
   try {
-    onProgress?.(5, `Upscayl ${status.runtimeVersion || ''} · ${model}`.trim());
+    onProgress?.(5, `Local AI Engine ${status.runtimeVersion || ''} · ${model}`.trim());
     await spawnEngine(status.engineBinary, args, onProgress);
     onProgress?.(96, 'Chuẩn hóa kích thước đầu ra');
 
@@ -187,6 +197,8 @@ async function runNcnnUpscale({ settingsService, inputPath, outputPath, model, s
 }
 
 module.exports = {
+  CORE_MODELS,
+  EXPERIMENTAL_MODELS,
   MODELS,
   getStatus,
   autoDetect,
