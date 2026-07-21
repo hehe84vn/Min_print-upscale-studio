@@ -108,6 +108,176 @@ async function rawArgbForDecode(filePath, maxDimension = 2400) {
   return { argb, width: info.width, height: info.height };
 }
 
+async function detectVisualBarcodeRegion(filePath, maxDimension = 1800) {
+  const image = sharp(filePath, { failOn: 'none' }).rotate();
+  const metadata = await image.metadata();
+  if (!metadata.width || !metadata.height) return null;
+
+  const scale = Math.min(1, maxDimension / Math.max(metadata.width, metadata.height));
+  const width = Math.max(1, Math.round(metadata.width * scale));
+  const height = Math.max(1, Math.round(metadata.height * scale));
+  const { data, info } = await image
+    .resize(width, height, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
+    .greyscale()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const tileWidth = 24;
+  const tileHeight = 24;
+  const columns = Math.ceil(info.width / tileWidth);
+  const rows = Math.ceil(info.height / tileHeight);
+  const candidate = new Uint8Array(columns * rows);
+  const tileScore = new Float64Array(columns * rows);
+
+  for (let tileY = 0; tileY < rows; tileY += 1) {
+    for (let tileX = 0; tileX < columns; tileX += 1) {
+      const startX = tileX * tileWidth;
+      const startY = tileY * tileHeight;
+      const endX = Math.min(info.width - 1, startX + tileWidth);
+      const endY = Math.min(info.height - 1, startY + tileHeight);
+      let samples = 0;
+      let strongVertical = 0;
+      let verticalEnergy = 0;
+      let horizontalEnergy = 0;
+      let darkPixels = 0;
+      let sum = 0;
+      let sumSquares = 0;
+
+      for (let y = Math.max(1, startY); y < endY; y += 1) {
+        for (let x = Math.max(1, startX); x < endX; x += 1) {
+          const index = y * info.width + x;
+          const value = data[index];
+          const gx = Math.abs(data[index + 1] - data[index - 1]);
+          const gy = Math.abs(data[index + info.width] - data[index - info.width]);
+          if (gx >= 45) strongVertical += 1;
+          verticalEnergy += gx;
+          horizontalEnergy += gy;
+          if (value < 120) darkPixels += 1;
+          sum += value;
+          sumSquares += value * value;
+          samples += 1;
+        }
+      }
+
+      if (!samples) continue;
+      const verticalDensity = strongVertical / samples;
+      const directionRatio = (verticalEnergy + samples) / (horizontalEnergy + samples);
+      const darkRatio = darkPixels / samples;
+      const mean = sum / samples;
+      const variance = Math.max(0, sumSquares / samples - mean * mean);
+      const index = tileY * columns + tileX;
+      const score = verticalDensity * Math.min(directionRatio, 8) * (1 - Math.abs(darkRatio - 0.35));
+      tileScore[index] = score;
+
+      if (
+        verticalDensity >= 0.1
+        && directionRatio >= 1.7
+        && darkRatio >= 0.04
+        && darkRatio <= 0.78
+        && variance >= 280
+      ) {
+        candidate[index] = 1;
+      }
+    }
+  }
+
+  const visited = new Uint8Array(candidate.length);
+  const components = [];
+  const neighbors = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+  for (let tileY = 0; tileY < rows; tileY += 1) {
+    for (let tileX = 0; tileX < columns; tileX += 1) {
+      const startIndex = tileY * columns + tileX;
+      if (!candidate[startIndex] || visited[startIndex]) continue;
+      const queue = [[tileX, tileY]];
+      const points = [];
+      visited[startIndex] = 1;
+
+      while (queue.length) {
+        const [currentX, currentY] = queue.pop();
+        points.push([currentX, currentY]);
+        for (const [offsetX, offsetY] of neighbors) {
+          const nextX = currentX + offsetX;
+          const nextY = currentY + offsetY;
+          if (nextX < 0 || nextX >= columns || nextY < 0 || nextY >= rows) continue;
+          const nextIndex = nextY * columns + nextX;
+          if (!candidate[nextIndex] || visited[nextIndex]) continue;
+          visited[nextIndex] = 1;
+          queue.push([nextX, nextY]);
+        }
+      }
+      components.push(points);
+    }
+  }
+
+  let best = null;
+  for (const points of components) {
+    if (points.length < 6) continue;
+    const xs = points.map(([x]) => x);
+    const ys = points.map(([, y]) => y);
+    const minTileX = Math.min(...xs);
+    const maxTileX = Math.max(...xs);
+    const minTileY = Math.min(...ys);
+    const maxTileY = Math.max(...ys);
+    const boxWidth = Math.min(info.width, (maxTileX + 1) * tileWidth) - minTileX * tileWidth;
+    const boxHeight = Math.min(info.height, (maxTileY + 1) * tileHeight) - minTileY * tileHeight;
+    const aspectRatio = boxWidth / Math.max(1, boxHeight);
+    const areaRatio = (boxWidth * boxHeight) / (info.width * info.height);
+    const widthRatio = boxWidth / info.width;
+    const heightRatio = boxHeight / info.height;
+    const fillRatio = points.length / ((maxTileX - minTileX + 1) * (maxTileY - minTileY + 1));
+
+    if (
+      aspectRatio < 1.15
+      || aspectRatio > 8
+      || areaRatio < 0.002
+      || areaRatio > 0.25
+      || widthRatio < 0.07
+      || heightRatio < 0.025
+      || fillRatio < 0.18
+    ) continue;
+
+    let scoreTotal = 0;
+    for (const [x, y] of points) scoreTotal += tileScore[y * columns + x];
+    const averageScore = scoreTotal / points.length;
+    const score = points.length * fillRatio * Math.min(aspectRatio, 4) * averageScore;
+    if (!best || score > best.score) {
+      best = { minTileX, maxTileX, minTileY, maxTileY, boxWidth, boxHeight, score, fillRatio, points: points.length };
+    }
+  }
+
+  if (!best) return null;
+  const leftPx = best.minTileX * tileWidth;
+  const topPx = best.minTileY * tileHeight;
+  const rightPx = Math.min(info.width, (best.maxTileX + 1) * tileWidth);
+  const bottomPx = Math.min(info.height, (best.maxTileY + 1) * tileHeight);
+  const padX = Math.max(5, (rightPx - leftPx) * 0.08);
+  const padY = Math.max(8, (bottomPx - topPx) * 0.24);
+  const region = {
+    left: clamp((leftPx - padX) / info.width, 0, 1),
+    top: clamp((topPx - padY) / info.height, 0, 1),
+    right: clamp((rightPx + padX) / info.width, 0, 1),
+    bottom: clamp((bottomPx + padY) / info.height, 0, 1)
+  };
+  const confidence = Number(clamp(0.48 + best.points / 140 + best.fillRatio * 0.18, 0.5, 0.94).toFixed(2));
+
+  return {
+    detected: true,
+    decoded: false,
+    visualOnly: true,
+    value: null,
+    valueHash: null,
+    valuePreview: 'Barcode chưa xác thực',
+    format: null,
+    formatName: 'BARCODE_LIKE',
+    region,
+    confidence,
+    warning: 'Phát hiện vùng giống barcode nhưng không giải mã được. Có thể checksum sai hoặc artwork chưa phải mã hợp lệ.',
+    analysisWidth: info.width,
+    analysisHeight: info.height
+  };
+}
+
 async function decodeBarcode(filePath) {
   try {
     const { argb, width, height } = await rawArgbForDecode(filePath);
@@ -125,6 +295,8 @@ async function decodeBarcode(filePath) {
     const format = result.getBarcodeFormat();
     return {
       detected: true,
+      decoded: true,
+      visualOnly: false,
       value,
       valueHash: hashValue(value),
       valuePreview: safePreview(value),
@@ -135,8 +307,18 @@ async function decodeBarcode(filePath) {
       analysisHeight: height
     };
   } catch (error) {
+    const visual = await detectVisualBarcodeRegion(filePath);
+    if (visual) {
+      return {
+        ...visual,
+        decodeErrorName: error?.name || 'NotFoundException',
+        decodeError: error?.message || 'Không giải mã được barcode.'
+      };
+    }
     return {
       detected: false,
+      decoded: false,
+      visualOnly: false,
       errorName: error?.name || 'NotFoundException',
       error: error?.message || 'Không tìm thấy QR/barcode có thể đọc.'
     };
@@ -144,13 +326,17 @@ async function decodeBarcode(filePath) {
 }
 
 function publicDetection(detection) {
-  if (!detection?.detected) return { detected: false };
+  if (!detection?.detected) return { detected: false, decoded: false, visualOnly: false };
   return {
     detected: true,
+    decoded: detection.decoded !== false,
+    visualOnly: Boolean(detection.visualOnly),
     format: detection.formatName,
     valueHash: detection.valueHash,
     valuePreview: detection.valuePreview,
-    region: detection.region
+    region: detection.region,
+    confidence: detection.confidence || null,
+    warning: detection.warning || null
   };
 }
 
@@ -160,7 +346,16 @@ async function validateBarcode(sourceDetection, outputPath) {
   }
 
   const outputDetection = await decodeBarcode(outputPath);
+  if (sourceDetection.visualOnly) {
+    return {
+      status: outputDetection.detected ? 'visual-pass' : 'visual-unreadable',
+      source: publicDetection(sourceDetection),
+      output: publicDetection(outputDetection)
+    };
+  }
+
   const matches = outputDetection.detected
+    && !outputDetection.visualOnly
     && outputDetection.valueHash === sourceDetection.valueHash
     && outputDetection.format === sourceDetection.format;
 
@@ -232,7 +427,12 @@ async function guardBarcode({ sourcePath, outputPath, sourceDetection = null, en
   if (!enabled) return { enabled: false, status: 'disabled', source: { detected: false }, output: { detected: false } };
   const source = sourceDetection || await decodeBarcode(sourcePath);
   const firstValidation = await validateBarcode(source, outputPath);
-  if (!source.detected || firstValidation.status === 'pass' || !source.region) {
+  if (
+    !source.detected
+    || firstValidation.status === 'pass'
+    || firstValidation.status === 'visual-pass'
+    || !source.region
+  ) {
     return { enabled: true, restored: false, ...firstValidation };
   }
 
@@ -256,6 +456,7 @@ module.exports = {
   SUPPORTED_FORMATS,
   createBarcodeMask,
   decodeBarcode,
+  detectVisualBarcodeRegion,
   guardBarcode,
   publicDetection,
   regionToPixels,
