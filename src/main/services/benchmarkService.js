@@ -29,8 +29,8 @@ const BENCHMARK_PRESETS = [
   },
   {
     id: 'packaging-hybrid',
-    label: 'Packaging Hybrid · Protected',
-    description: 'Trộn High Fidelity với RealESRGAN Detail và tự giảm Detail tại chữ, logo, đường biên và hình học mạnh.',
+    label: 'Packaging Hybrid · Semantic Guard',
+    description: 'Trộn High Fidelity với RealESRGAN Detail, bảo vệ vùng giống chữ/logo và tự kiểm tra QR/barcode.',
     type: 'blend',
     baseModel: 'high-fidelity-4x',
     detailModel: 'realesrgan-x4plus'
@@ -108,6 +108,8 @@ async function runBenchmark({
   blendStrength = 0.2,
   protectionEnabled = true,
   protectionSensitivity = 65,
+  semanticProtectionEnabled = true,
+  codeGuardEnabled = true,
   onProgress
 }) {
   if (!inputPath) throw new Error('Chưa chọn ảnh nguồn cho Model Lab.');
@@ -168,10 +170,20 @@ async function runBenchmark({
         if (preset.type === 'blend') {
           const basePath = await runModel(preset.baseModel, progress);
           const detailPath = await runModel(preset.detailModel, progress);
-          const maskPath = protectionEnabled
-            ? path.join(sessionDirectory, `${String(index + 1).padStart(2, '0')}_${sanitizeName(preset.id)}_protection-mask.png`)
+          const prefix = `${String(index + 1).padStart(2, '0')}_${sanitizeName(preset.id)}`;
+          const maskPath = protectionEnabled ? path.join(sessionDirectory, `${prefix}_protection-mask.png`) : null;
+          const semanticMaskPath = protectionEnabled && semanticProtectionEnabled
+            ? path.join(sessionDirectory, `${prefix}_text-logo-mask.png`)
             : null;
-          progress(92, protectionEnabled ? 'đang tạo mask bảo vệ chữ, logo và cạnh' : 'đang trộn toàn ảnh');
+          const barcodeMaskPath = protectionEnabled && codeGuardEnabled
+            ? path.join(sessionDirectory, `${prefix}_barcode-mask.png`)
+            : null;
+          progress(
+            92,
+            protectionEnabled
+              ? 'đang tạo semantic mask và kiểm tra QR/barcode'
+              : 'đang trộn toàn ảnh'
+          );
           blendInfo = protectionEnabled
             ? await protectedBlend({
               sourcePath: inputPath,
@@ -180,8 +192,12 @@ async function runBenchmark({
               outputPath,
               strength: safeStrength,
               sensitivity: safeSensitivity,
+              semanticEnabled: Boolean(semanticProtectionEnabled),
+              codeGuardEnabled: Boolean(codeGuardEnabled),
               dpi: safeDpi,
-              maskOutputPath: maskPath
+              maskOutputPath: maskPath,
+              semanticMaskOutputPath: semanticMaskPath,
+              barcodeMaskOutputPath: barcodeMaskPath
             })
             : await flatBlend({
               basePath,
@@ -203,6 +219,7 @@ async function runBenchmark({
           durationMs: Date.now() - startedAt,
           metadata: await imageSummary(outputPath),
           protection: blendInfo?.protection || null,
+          barcodeGuard: blendInfo?.barcodeGuard || null,
           blendStrength: blendInfo?.strength || null,
           error: null
         });
@@ -215,6 +232,7 @@ async function runBenchmark({
           durationMs: Date.now() - startedAt,
           metadata: null,
           protection: null,
+          barcodeGuard: null,
           blendStrength: null,
           error: error.message || String(error)
         });
@@ -223,7 +241,7 @@ async function runBenchmark({
 
     const reportPath = path.join(sessionDirectory, 'benchmark-report.json');
     const report = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       createdAt: new Date().toISOString(),
       inputPath,
       referencePath,
@@ -232,7 +250,9 @@ async function runBenchmark({
       blendStrength: safeStrength,
       packagingProtection: {
         enabled: Boolean(protectionEnabled),
-        sensitivity: safeSensitivity
+        sensitivity: safeSensitivity,
+        semanticProtectionEnabled: Boolean(semanticProtectionEnabled),
+        codeGuardEnabled: Boolean(codeGuardEnabled)
       },
       results
     };
