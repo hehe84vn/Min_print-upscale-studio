@@ -3,11 +3,19 @@ const fs = require('node:fs/promises');
 const { pathToFileURL } = require('node:url');
 const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const { SettingsService } = require('./services/settingsService');
+const { SecureSecretsService } = require('./services/secureSecretsService');
 const engineService = require('./services/engineService');
 const { processImage, suggestedOutput } = require('./services/imageService');
 
 let mainWindow;
 let settingsService;
+let secureSecretsService;
+
+const AI_PROVIDERS = new Set(['gemini', 'openai']);
+const AI_SECRET_NAMES = {
+  gemini: 'geminiApiKey',
+  openai: 'openAiApiKey'
+};
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -32,6 +40,27 @@ function createWindow() {
 function emitProgress(percent, message = '') {
   if (!mainWindow?.isDestroyed()) {
     mainWindow.webContents.send('job:progress', { percent, message });
+  }
+}
+
+async function getAiSettingsSummary() {
+  const settings = await settingsService.read();
+  const provider = AI_PROVIDERS.has(settings.aiProvider) ? settings.aiProvider : 'gemini';
+
+  try {
+    const [gemini, openai] = await Promise.all([
+      secureSecretsService.status(AI_SECRET_NAMES.gemini),
+      secureSecretsService.status(AI_SECRET_NAMES.openai)
+    ]);
+    return { provider, gemini, openai, secureStorageAvailable: true };
+  } catch (error) {
+    return {
+      provider,
+      gemini: { configured: false, suffix: null },
+      openai: { configured: false, suffix: null },
+      secureStorageAvailable: false,
+      error: error.message
+    };
   }
 }
 
@@ -100,10 +129,30 @@ function registerIpc() {
     await settingsService.clearEngine();
     return engineService.getStatus(settingsService);
   });
+
+  ipcMain.handle('ai:settings:get', () => getAiSettingsSummary());
+
+  ipcMain.handle('ai:settings:save', async (_event, payload = {}) => {
+    const provider = AI_PROVIDERS.has(payload.provider) ? payload.provider : 'gemini';
+    const geminiApiKey = typeof payload.geminiApiKey === 'string' ? payload.geminiApiKey.trim() : '';
+    const openAiApiKey = typeof payload.openAiApiKey === 'string' ? payload.openAiApiKey.trim() : '';
+
+    await settingsService.write({ aiProvider: provider });
+    if (geminiApiKey) await secureSecretsService.set(AI_SECRET_NAMES.gemini, geminiApiKey);
+    if (openAiApiKey) await secureSecretsService.set(AI_SECRET_NAMES.openai, openAiApiKey);
+    return getAiSettingsSummary();
+  });
+
+  ipcMain.handle('ai:settings:clear-key', async (_event, provider) => {
+    if (!AI_PROVIDERS.has(provider)) throw new Error('Nhà cung cấp AI không hợp lệ.');
+    await secureSecretsService.remove(AI_SECRET_NAMES[provider]);
+    return getAiSettingsSummary();
+  });
 }
 
 app.whenReady().then(() => {
   settingsService = new SettingsService(app.getPath('userData'));
+  secureSecretsService = new SecureSecretsService(app.getPath('userData'));
   registerIpc();
   createWindow();
 
