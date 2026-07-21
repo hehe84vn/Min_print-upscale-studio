@@ -16,7 +16,6 @@ const CORE_MODELS = [
 ];
 
 const EXPERIMENTAL_MODELS = [
-  'realesrnet-x4plus',
   'realesrgan-x4plus'
 ];
 
