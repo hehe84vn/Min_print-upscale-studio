@@ -112,7 +112,8 @@ try {
 
   const qrText = 'PRINT-UPSCALE-STUDIO-V2.3-CODE-GUARD';
   const qrSize = 256;
-  const qrMatrix = new QRCodeWriter().encode(qrText, BarcodeFormat.QR_CODE, qrSize, qrSize);
+  const qrHints = new Map();
+  const qrMatrix = new QRCodeWriter().encode(qrText, BarcodeFormat.QR_CODE, qrSize, qrSize, qrHints);
   const qrPixels = Buffer.alloc(qrSize * qrSize * 3, 255);
   for (let y = 0; y < qrSize; y += 1) {
     for (let x = 0; x < qrSize; x += 1) {
