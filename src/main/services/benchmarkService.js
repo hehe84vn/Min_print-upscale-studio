@@ -8,7 +8,7 @@ const BENCHMARK_PRESETS = [
   {
     id: 'current-photo',
     label: 'Current · High Fidelity',
-    description: 'Model ảnh chụp hiện tại của app.',
+    description: 'Model ảnh chụp hiện tại của app, dùng làm nền fidelity.',
     type: 'model',
     model: 'high-fidelity-4x'
   },
@@ -20,13 +20,6 @@ const BENCHMARK_PRESETS = [
     model: 'remacri-4x'
   },
   {
-    id: 'official-fidelity',
-    label: 'RealESRNet x4plus · Fidelity',
-    description: 'Model chính thức ưu tiên giữ cấu trúc, chữ, logo và hình học.',
-    type: 'model',
-    model: 'realesrnet-x4plus'
-  },
-  {
     id: 'official-detail',
     label: 'RealESRGAN x4plus · Detail',
     description: 'Model chính thức ưu tiên độ nét cảm nhận và texture.',
@@ -35,10 +28,10 @@ const BENCHMARK_PRESETS = [
   },
   {
     id: 'packaging-hybrid',
-    label: 'Packaging Hybrid · Protected Blend',
-    description: 'Trộn Fidelity với Detail ở mức thấp để tăng texture nhưng giảm nguy cơ phá artwork.',
+    label: 'Packaging Hybrid · Fidelity + Detail',
+    description: 'Trộn High Fidelity hiện tại với RealESRGAN Detail ở mức thấp để tăng texture nhưng giảm nguy cơ phá artwork.',
     type: 'blend',
-    baseModel: 'realesrnet-x4plus',
+    baseModel: 'high-fidelity-4x',
     detailModel: 'realesrgan-x4plus'
   }
 ];
@@ -216,7 +209,7 @@ async function runBenchmark({
 
     const reportPath = path.join(sessionDirectory, 'benchmark-report.json');
     const report = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       createdAt: new Date().toISOString(),
       inputPath,
       referencePath,
