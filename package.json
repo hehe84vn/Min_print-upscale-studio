@@ -1,6 +1,6 @@
 {
   "name": "print-upscale-studio",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Hybrid local and cloud AI image enhancement toolkit for print workflows, with secure Gemini and OpenAI BYOK support.",
   "main": "src/main/main.js",
   "author": "ngoctunguyenle@gmail.com",
