@@ -16,7 +16,6 @@ const CORE_MODELS = [
 ];
 
 const REAL_ESRGAN_MODELS = [
-  'realesrnet-x4plus',
   'realesrgan-x4plus'
 ];
 
@@ -36,9 +35,6 @@ const root = path.resolve(import.meta.dirname, '..');
 const destination = path.join(root, 'vendor', 'upscayl', `${platform}-${arch}`);
 
 const realEsrganTag = 'v0.2.5.0';
-// NCNN .param/.bin weights are platform-independent. The Ubuntu package is
-// used consistently because it contains the complete model folder, while the
-// macOS portable package is intended primarily as an executable bundle.
 const realEsrganAssetName = 'realesrgan-ncnn-vulkan-20220424-ubuntu.zip';
 const realEsrganAssetUrl = `https://github.com/xinntao/Real-ESRGAN/releases/download/${realEsrganTag}/${realEsrganAssetName}`;
 
@@ -164,7 +160,7 @@ async function main() {
     await download(assetUrl, archive);
     await extract(archive, extracted);
 
-    console.log(`[upscayl-runtime] Downloading official Real-ESRGAN model weights from ${realEsrganAssetUrl}`);
+    console.log(`[upscayl-runtime] Downloading official Real-ESRGAN model weight from ${realEsrganAssetUrl}`);
     await download(realEsrganAssetUrl, realEsrganArchive);
     await extract(realEsrganArchive, realEsrganExtracted);
 
@@ -185,11 +181,12 @@ async function main() {
 
     for (const model of REAL_ESRGAN_MODELS) {
       if (!realEsrganNamedFiles.has(`${model}.param`) || !realEsrganNamedFiles.has(`${model}.bin`)) {
-        const available = [...realEsrganNamedFiles.keys()]
+        const availableModels = realEsrganFiles
+          .map((file) => path.basename(file))
           .filter((name) => name.endsWith('.param') || name.endsWith('.bin'))
           .sort()
           .join(', ');
-        throw new Error(`The official Real-ESRGAN archive does not contain the complete ${model} model. Available model files: ${available || 'none'}`);
+        throw new Error(`The official Real-ESRGAN archive does not contain the complete ${model} model. Available model files: ${availableModels}`);
       }
     }
 
@@ -221,14 +218,14 @@ async function main() {
       'Backend source: https://github.com/upscayl/upscayl-ncnn',
       `Original asset: ${assetUrl}`,
       '',
-      '## Real-ESRGAN experimental benchmark model weights',
+      '## Real-ESRGAN experimental benchmark model weight',
       `Release: ${realEsrganTag}`,
       'Source: https://github.com/xinntao/Real-ESRGAN',
       'NCNN source: https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan',
-      `Model archive: ${realEsrganAssetUrl}`,
-      'Models: realesrnet-x4plus, realesrgan-x4plus',
+      `Original asset: ${realEsrganAssetUrl}`,
+      'Model: realesrgan-x4plus',
       '',
-      'The Real-ESRGAN NCNN weights are platform-independent and are executed by the bundled native Local AI engine for the target platform.',
+      'The Real-ESRGAN weight is executed by the bundled native Local AI engine for the target platform.',
       'Upscayl and Real-ESRGAN are independent projects. Print Upscale Studio is not an official product of either project.'
     ].join('\n'), 'utf8');
 
@@ -253,8 +250,7 @@ async function main() {
           assetName: realEsrganAssetName,
           assetUrl: realEsrganAssetUrl,
           models: REAL_ESRGAN_MODELS,
-          runtime: 'bundled-native-local-engine',
-          weightsPlatformIndependent: true
+          runtime: 'bundled-native-local-engine'
         }
       },
       preparedAt: new Date().toISOString()
