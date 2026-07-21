@@ -82,14 +82,14 @@ function findImageData(value, visited = new Set()) {
   )) {
     return {
       data: value.data,
-      mimeType: value.mime_type || value.mimeType || 'image/png'
+      mimeType: value.mime_type || value.mimeType || 'image/jpeg'
     };
   }
 
   if (value.output_image && typeof value.output_image.data === 'string') {
     return {
       data: value.output_image.data,
-      mimeType: value.output_image.mime_type || value.output_image.mimeType || 'image/png'
+      mimeType: value.output_image.mime_type || value.output_image.mimeType || 'image/jpeg'
     };
   }
 
@@ -123,7 +123,7 @@ async function enhanceWithGemini({ apiKey, inputPath, prompt, options }) {
       ],
       response_format: {
         type: 'image',
-        mime_type: 'image/png',
+        mime_type: 'image/jpeg',
         image_size: imageSize
       }
     })
