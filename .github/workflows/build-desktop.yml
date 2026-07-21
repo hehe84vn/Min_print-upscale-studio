@@ -1,4 +1,4 @@
-name: Build all-in-one desktop installers
+name: Build Print Upscale Studio V2
 
 on:
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Run checks
+      - name: Run V2 checks
         run: npm run check
 
   build-windows:
@@ -56,16 +56,16 @@ jobs:
       - name: Run smoke tests
         run: npm run test:smoke
 
-      - name: Build Windows all-in-one installers
+      - name: Build Windows V2 installers
         run: npm run dist:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload Windows installers
+      - name: Upload Windows V2 installers
         uses: actions/upload-artifact@v4
         with:
-          name: print-upscale-studio-all-in-one-windows-x64
+          name: print-upscale-studio-v2-windows-x64
           path: release/*.exe
           if-no-files-found: error
 
@@ -88,19 +88,17 @@ jobs:
       - name: Run smoke tests
         run: npm run test:smoke
 
-      - name: Build macOS Apple Silicon all-in-one installers
+      - name: Build macOS Apple Silicon V2 DMG
         run: npm run dist:mac:arm64
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload macOS Apple Silicon installers
+      - name: Upload macOS Apple Silicon V2 DMG
         uses: actions/upload-artifact@v4
         with:
-          name: print-upscale-studio-all-in-one-macos-arm64
-          path: |
-            release/*.dmg
-            release/*.zip
+          name: print-upscale-studio-v2-macos-arm64
+          path: release/*.dmg
           if-no-files-found: error
 
   build-macos-x64:
@@ -122,19 +120,17 @@ jobs:
       - name: Run smoke tests
         run: npm run test:smoke
 
-      - name: Build macOS Intel all-in-one installers
+      - name: Build macOS Intel V2 DMG
         run: npm run dist:mac:x64
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload macOS Intel installers
+      - name: Upload macOS Intel V2 DMG
         uses: actions/upload-artifact@v4
         with:
-          name: print-upscale-studio-all-in-one-macos-x64
-          path: |
-            release/*.dmg
-            release/*.zip
+          name: print-upscale-studio-v2-macos-x64
+          path: release/*.dmg
           if-no-files-found: error
 
   release:
