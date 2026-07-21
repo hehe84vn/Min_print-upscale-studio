@@ -11,6 +11,7 @@ const { listPresets } = require('../src/main/services/benchmarkService');
 const { EXPERIMENTAL_MODELS } = require('../src/main/services/engineService');
 const { createBarcodeMask, decodeBarcode } = require('../src/main/services/barcodeGuardService');
 const {
+  MASK_REFINEMENT_VERSION,
   createProtectionMask,
   createSemanticTextLogoMask,
   protectedBlend
@@ -95,6 +96,14 @@ try {
   if (semanticMask.coveragePercent < 0 || semanticMask.coveragePercent >= 100) {
     throw new Error(`Semantic mask coverage is unexpected: ${semanticMask.coveragePercent}%`);
   }
+  if (semanticMask.refinementVersion !== MASK_REFINEMENT_VERSION || semanticMask.closeRadius < 1) {
+    throw new Error('Semantic mask refinement metadata is missing.');
+  }
+  const semanticPixels = await sharp(semanticMask.buffer).greyscale().raw().toBuffer();
+  const semanticLevels = new Set(semanticPixels).size;
+  if (semanticLevels < 8) {
+    throw new Error(`Semantic mask has too few feather levels (${semanticLevels}); block refinement may be disabled.`);
+  }
 
   const maskPath = path.join(workspace, 'protection-mask.png');
   const mask = await createProtectionMask({
@@ -109,6 +118,9 @@ try {
   });
   if (mask.coveragePercent <= 0 || mask.coveragePercent >= 100) {
     throw new Error(`Protection mask coverage is unexpected: ${mask.coveragePercent}%`);
+  }
+  if (mask.refinementVersion !== MASK_REFINEMENT_VERSION || !mask.structural?.featherSigma) {
+    throw new Error('Combined mask refinement metadata is missing.');
   }
 
   const basePath = path.join(workspace, 'base.png');
@@ -130,10 +142,15 @@ try {
     semanticMaskOutputPath: semanticMaskPath
   });
   const protectedStat = await stat(protectedOutputPath);
-  if (!blend.protection?.enabled || !blend.protection.semantic?.enabled || protectedStat.size < 64) {
-    throw new Error('Semantic protected blend did not produce a valid result.');
+  if (
+    !blend.protection?.enabled
+    || blend.protection.refinementVersion !== MASK_REFINEMENT_VERSION
+    || !blend.protection.semantic?.enabled
+    || protectedStat.size < 64
+  ) {
+    throw new Error('Refined semantic protected blend did not produce a valid result.');
   }
-  console.log(`Semantic protection OK: ${blend.protection.coveragePercent}% combined coverage`);
+  console.log(`Mask refinement ${MASK_REFINEMENT_VERSION} OK: ${blend.protection.coveragePercent}% combined coverage`);
 
   const barcodePath = path.join(workspace, 'invalid-barcode-artwork.png');
   await sharp(invalidBarcodeArtwork()).png().toFile(barcodePath);
