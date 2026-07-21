@@ -4,34 +4,118 @@ const state = {
   outputPath: null,
   busy: false,
   engine: null,
-  aiSettings: null
+  aiSettings: null,
+  sourceUrl: null,
+  resultUrl: null
 };
 
 const toolInfo = {
-  upscale: ['AI Upscale', 'Phóng lớn ảnh bằng backend Upscayl NCNN hoặc Lanczos dự phòng.'],
+  upscale: ['Local Enhance', 'Tăng kích thước và độ nét bằng bộ xử lý AI trên thiết bị.'],
+  'ai-enhance': ['AI Enhance', 'Tái tạo chi tiết bằng Gemini hoặc OpenAI với mức kiểm soát phù hợp.'],
   restore: ['Restore Safe', 'Phục hồi ảnh nhẹ theo hướng bảo toàn, không sinh chi tiết giả.'],
-  'vector-logo': ['Vector Logo', 'Chuyển logo màu, con dấu hoặc line art thành SVG vector.'],
-  'text-print': ['Text Print Safe', 'Làm nét vùng chữ raster mà không OCR hoặc thay font.']
+  'text-print': ['Text & Artwork', 'Làm nét chữ và artwork raster mà không OCR hoặc thay font.'],
+  'vector-logo': ['Vector Logo', 'Chuyển logo màu, con dấu hoặc line art thành SVG vector.']
+};
+
+const providerModels = {
+  gemini: [
+    ['gemini-3.1-flash-image', 'Nano Banana 2 · cân bằng'],
+    ['gemini-3-pro-image', 'Nano Banana Pro · chất lượng cao']
+  ],
+  openai: [
+    ['gpt-image-2', 'GPT Image 2']
+  ]
 };
 
 const $ = (id) => document.getElementById(id);
 const fileName = (value) => value ? value.replaceAll('\\', '/').split('/').pop() : '';
 
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '—';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / (1024 ** index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function selectedAiMode() {
+  return document.querySelector('input[name="aiMode"]:checked')?.value || 'safe';
+}
+
+function resetOutput() {
+  state.outputPath = null;
+  $('outputName').textContent = 'Chọn nơi lưu';
+  $('resultBox').hidden = true;
+}
+
+function showSourceOnly() {
+  $('compareStage').hidden = true;
+  $('compareControls').hidden = true;
+  $('sourceStage').hidden = !state.inputPath;
+}
+
+async function showComparison(outputPath) {
+  if (state.tool === 'vector-logo') return;
+  state.resultUrl = await window.studio.fileUrl(outputPath);
+  $('beforeImage').src = state.sourceUrl;
+  $('afterImage').src = `${state.resultUrl}?t=${Date.now()}`;
+  $('sourceStage').hidden = true;
+  $('compareStage').hidden = false;
+  $('compareControls').hidden = false;
+  $('compareSlider').value = '50';
+  updateCompare(50);
+}
+
+function updateCompare(value) {
+  const percent = Math.max(0, Math.min(100, Number(value)));
+  $('afterClip').style.clipPath = `inset(0 ${100 - percent}% 0 0)`;
+  $('compareDivider').style.left = `${percent}%`;
+}
+
+function renderInspector(metadata) {
+  const sizeAt300 = metadata.printSizes?.[300];
+  $('pixelInfo').textContent = `${metadata.width} × ${metadata.height} px`;
+  $('printInfo').textContent = sizeAt300 ? `${sizeAt300.widthCm} × ${sizeAt300.heightCm} cm` : '—';
+  $('formatInfo').textContent = `${String(metadata.format || '').toUpperCase()} · ${metadata.colorSpace || '—'}`;
+  $('sizeInfo').textContent = formatBytes(metadata.sizeBytes);
+  $('inspectorCard').hidden = false;
+}
+
 async function setInput(inputPath) {
   if (!inputPath) return;
   state.inputPath = inputPath;
-  state.outputPath = null;
+  state.sourceUrl = await window.studio.fileUrl(inputPath);
+  resetOutput();
+
   $('inputName').textContent = fileName(inputPath);
-  $('outputName').textContent = 'Chọn nơi lưu';
-  $('previewImage').src = await window.studio.fileUrl(inputPath);
-  $('previewImage').hidden = false;
+  $('previewImage').src = state.sourceUrl;
   $('emptyState').hidden = true;
+  $('sourceStage').hidden = false;
+  $('compareStage').hidden = true;
+  $('compareControls').hidden = true;
   $('runBtn').disabled = false;
-  $('resultBox').hidden = true;
+
+  try {
+    renderInspector(await window.studio.inspectImage(inputPath));
+  } catch {
+    $('inspectorCard').hidden = true;
+  }
 }
 
 async function chooseInput() {
   await setInput(await window.studio.selectInput());
+}
+
+function updateProviderModels() {
+  const provider = $('jobProviderSelect').value;
+  const select = $('aiModelSelect');
+  select.replaceChildren();
+  for (const [value, label] of providerModels[provider] || providerModels.gemini) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    select.append(option);
+  }
+  $('aiSizeSetting').hidden = provider === 'openai';
 }
 
 function selectTool(tool) {
@@ -40,66 +124,140 @@ function selectTool(tool) {
   $('toolTitle').textContent = title;
   $('toolDescription').textContent = description;
   document.querySelectorAll('.nav-item').forEach((button) => button.classList.toggle('active', button.dataset.tool === tool));
+
   $('upscaleSettings').hidden = tool !== 'upscale';
+  $('aiEnhanceSettings').hidden = tool !== 'ai-enhance';
   $('restoreSettings').hidden = tool !== 'restore';
-  $('vectorSettings').hidden = tool !== 'vector-logo';
   $('textSettings').hidden = tool !== 'text-print';
-  state.outputPath = null;
-  $('outputName').textContent = 'Chọn nơi lưu';
-  $('resultBox').hidden = true;
+  $('vectorSettings').hidden = tool !== 'vector-logo';
+
+  $('scaleSetting').hidden = ['ai-enhance', 'vector-logo'].includes(tool);
+  $('dpiSetting').hidden = tool === 'vector-logo';
+  $('formatSetting').hidden = tool === 'vector-logo';
+
+  const isCloud = tool === 'ai-enhance';
+  $('privacyBadge').textContent = isCloud ? 'Ảnh được gửi tới AI Cloud' : 'Ảnh không rời khỏi máy';
+  $('privacyBadge').classList.toggle('cloud', isCloud);
+  $('runBtn').textContent = isCloud ? 'Tăng cường bằng AI' : tool === 'vector-logo' ? 'Tạo SVG vector' : 'Xử lý ảnh';
+
+  if (isCloud && state.aiSettings) {
+    $('jobProviderSelect').value = state.aiSettings.provider || 'gemini';
+    updateProviderModels();
+  }
+  resetOutput();
+  showSourceOnly();
 }
 
 async function chooseOutput() {
   if (!state.inputPath) return;
-  const outputPath = await window.studio.selectOutput({ inputPath: state.inputPath, operation: state.tool });
+  const outputPath = await window.studio.selectOutput({
+    inputPath: state.inputPath,
+    operation: state.tool,
+    format: $('formatSelect').value
+  });
   if (outputPath) {
     state.outputPath = outputPath;
     $('outputName').textContent = fileName(outputPath);
   }
 }
 
+function commonRasterOptions() {
+  return {
+    dpi: Number($('dpiSelect').value),
+    quality: 95
+  };
+}
+
 function optionsForTool() {
-  const common = { scale: Number($('scaleSelect').value) };
+  const common = commonRasterOptions();
   if (state.tool === 'upscale') {
     return {
       ...common,
+      scale: Number($('scaleSelect').value),
       model: $('modelSelect').value,
-      useNcnn: $('useNcnn').checked,
-      allowFallback: $('allowFallback').checked,
+      useNcnn: true,
+      allowFallback: true,
       sharpen: true
     };
   }
+  if (state.tool === 'ai-enhance') {
+    return {
+      ...common,
+      provider: $('jobProviderSelect').value,
+      model: $('aiModelSelect').value,
+      mode: selectedAiMode(),
+      imageSize: $('aiImageSize').value,
+      protectFace: $('protectFace').checked,
+      protectText: $('protectText').checked,
+      protectLogo: $('protectLogo').checked,
+      preserveColor: $('preserveColor').checked,
+      customPrompt: $('customPrompt').value,
+      finishSharpen: true
+    };
+  }
   if (state.tool === 'restore') {
-    return { ...common, denoise: Number($('denoise').value), saturation: Number($('saturation').value), contrast: Number($('contrast').value) };
+    return {
+      ...common,
+      scale: Number($('scaleSelect').value),
+      denoise: Number($('denoise').value),
+      saturation: Number($('saturation').value),
+      contrast: Number($('contrast').value)
+    };
   }
   if (state.tool === 'vector-logo') {
-    return { colorMode: $('colorMode').value, threshold: Number($('threshold').value), turdSize: Number($('turdSize').value), invert: $('invertVector').checked, colorPrecision: 6, layerDifference: 5 };
+    return {
+      colorMode: $('colorMode').value,
+      threshold: Number($('threshold').value),
+      turdSize: Number($('turdSize').value),
+      invert: $('invertVector').checked,
+      colorPrecision: 6,
+      layerDifference: 5
+    };
   }
-  return { ...common, edge: Number($('edge').value) };
+  return {
+    ...common,
+    scale: Number($('scaleSelect').value),
+    edge: Number($('edge').value)
+  };
+}
+
+async function ensureAiConfigured() {
+  const settings = await window.studio.getAiSettings();
+  renderAiSettings(settings);
+  const provider = $('jobProviderSelect').value;
+  const configured = provider === 'gemini' ? settings.gemini?.configured : settings.openai?.configured;
+  if (!configured) {
+    await openSettings();
+    throw new Error(`Chưa có API key ${provider === 'gemini' ? 'Gemini' : 'OpenAI'}.`);
+  }
 }
 
 async function run() {
   if (state.busy || !state.inputPath) return;
-  if (!state.outputPath) await chooseOutput();
-  if (!state.outputPath) return;
-
-  state.busy = true;
-  $('runBtn').disabled = true;
-  $('progressWrap').hidden = false;
-  $('resultBox').hidden = true;
-  $('progressBar').style.width = '1%';
-  $('progressText').textContent = 'Đang chuẩn bị...';
 
   try {
+    if (state.tool === 'ai-enhance') await ensureAiConfigured();
+    if (!state.outputPath) await chooseOutput();
+    if (!state.outputPath) return;
+
+    state.busy = true;
+    $('runBtn').disabled = true;
+    $('progressWrap').hidden = false;
+    $('resultBox').hidden = true;
+    $('progressBar').style.width = '1%';
+    $('progressText').textContent = 'Đang chuẩn bị...';
+
     const result = await window.studio.process({
       operation: state.tool,
       inputPath: state.inputPath,
       outputPath: state.outputPath,
       options: optionsForTool()
     });
+
     $('resultBox').classList.remove('error');
     $('resultBox').textContent = `Đã lưu: ${result.outputPath}`;
     $('resultBox').hidden = false;
+    await showComparison(result.outputPath);
   } catch (error) {
     $('resultBox').classList.add('error');
     $('resultBox').textContent = error.message || String(error);
@@ -113,10 +271,12 @@ async function run() {
 async function refreshEngine(statusPromise) {
   const status = await statusPromise;
   state.engine = status;
-  $('engineDot').classList.toggle('online', status.configured && status.availableModels.length > 0);
-  $('engineStatus').textContent = status.configured
-    ? `${status.availableModels.length}/${status.expectedModels.length} model sẵn sàng.`
-    : 'Chưa cấu hình. Có thể dùng fallback không-AI.';
+  const ready = status.configured && status.availableModels.length > 0;
+  $('engineDot').classList.toggle('online', ready);
+  $('engineStatus').textContent = ready
+    ? 'Sẵn sàng xử lý trên thiết bị.'
+    : 'Chế độ tương thích đang khả dụng.';
+
   [...$('modelSelect').options].forEach((option) => {
     option.disabled = status.configured && !status.availableModels.includes(option.value);
   });
@@ -132,6 +292,10 @@ function setAiSettingsMessage(message, isError = false) {
 function renderAiSettings(settings) {
   state.aiSettings = settings;
   $('aiProviderSelect').value = settings.provider || 'gemini';
+  if (state.tool === 'ai-enhance') {
+    $('jobProviderSelect').value = settings.provider || 'gemini';
+    updateProviderModels();
+  }
 
   const geminiSuffix = settings.gemini?.suffix;
   const openAiSuffix = settings.openai?.suffix;
@@ -144,6 +308,8 @@ function renderAiSettings(settings) {
 
   $('clearGeminiKeyBtn').disabled = !settings.gemini?.configured;
   $('clearOpenAiKeyBtn').disabled = !settings.openai?.configured;
+  $('testGeminiKeyBtn').disabled = !settings.gemini?.configured;
+  $('testOpenAiKeyBtn').disabled = !settings.openai?.configured;
   $('saveSettingsBtn').disabled = settings.secureStorageAvailable === false;
 
   if (settings.secureStorageAvailable === false) {
@@ -175,7 +341,7 @@ function closeSettings() {
   setAiSettingsMessage('');
 }
 
-async function saveAiSettings() {
+async function saveAiSettings(showSuccess = true) {
   const button = $('saveSettingsBtn');
   button.disabled = true;
   setAiSettingsMessage('Đang lưu...');
@@ -189,11 +355,25 @@ async function saveAiSettings() {
     $('geminiApiKeyInput').value = '';
     $('openAiApiKeyInput').value = '';
     renderAiSettings(settings);
-    setAiSettingsMessage('Đã lưu cài đặt AI an toàn trên thiết bị.');
+    if (showSuccess) setAiSettingsMessage('Đã lưu cài đặt AI an toàn trên thiết bị.');
+    return settings;
   } catch (error) {
     setAiSettingsMessage(error.message || String(error), true);
+    throw error;
   } finally {
     button.disabled = state.aiSettings?.secureStorageAvailable === false;
+  }
+}
+
+async function testAiConnection(provider) {
+  const pendingKey = provider === 'gemini' ? $('geminiApiKeyInput').value.trim() : $('openAiApiKeyInput').value.trim();
+  try {
+    if (pendingKey) await saveAiSettings(false);
+    setAiSettingsMessage(`Đang kiểm tra kết nối ${provider === 'gemini' ? 'Gemini' : 'OpenAI'}...`);
+    await window.studio.testAiConnection(provider);
+    setAiSettingsMessage(`Kết nối ${provider === 'gemini' ? 'Gemini' : 'OpenAI'} thành công.`);
+  } catch (error) {
+    setAiSettingsMessage(error.message || String(error), true);
   }
 }
 
@@ -220,17 +400,25 @@ $('chooseInputBtn').addEventListener('click', chooseInput);
 $('changeInputBtn').addEventListener('click', chooseInput);
 $('chooseOutputBtn').addEventListener('click', chooseOutput);
 $('runBtn').addEventListener('click', run);
+$('showSourceBtn').addEventListener('click', showSourceOnly);
+$('compareSlider').addEventListener('input', (event) => updateCompare(event.target.value));
+$('formatSelect').addEventListener('change', resetOutput);
+$('jobProviderSelect').addEventListener('change', updateProviderModels);
+
 $('toolNav').addEventListener('click', (event) => {
   const button = event.target.closest('.nav-item');
   if (button) selectTool(button.dataset.tool);
 });
+
 $('autoDetectBtn').addEventListener('click', () => refreshEngine(window.studio.autoDetectEngine()));
 $('engineSetupBtn').addEventListener('click', () => refreshEngine(window.studio.selectEngineBinary()));
 $('modelsSetupBtn').addEventListener('click', () => refreshEngine(window.studio.selectModelsDirectory()));
 $('appSettingsBtn').addEventListener('click', openSettings);
 $('closeSettingsBtn').addEventListener('click', closeSettings);
 $('cancelSettingsBtn').addEventListener('click', closeSettings);
-$('saveSettingsBtn').addEventListener('click', saveAiSettings);
+$('saveSettingsBtn').addEventListener('click', () => saveAiSettings(true));
+$('testGeminiKeyBtn').addEventListener('click', () => testAiConnection('gemini'));
+$('testOpenAiKeyBtn').addEventListener('click', () => testAiConnection('openai'));
 $('clearGeminiKeyBtn').addEventListener('click', () => clearAiKey('gemini'));
 $('clearOpenAiKeyBtn').addEventListener('click', () => clearAiKey('openai'));
 $('settingsModal').addEventListener('click', (event) => {
@@ -269,4 +457,7 @@ bindRange('contrast', 'contrastValue');
 bindRange('threshold', 'thresholdValue');
 bindRange('turdSize', 'turdValue');
 bindRange('edge', 'edgeValue');
+updateProviderModels();
+loadAiSettings();
 refreshEngine(window.studio.getEngineStatus());
+selectTool('upscale');
