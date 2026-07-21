@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data:; img-src 'self' file: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self';" />
-  <title>Print Upscale Studio V2.2 Experimental</title>
+  <title>Print Upscale Studio V2.3.1 Mask Refinement</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -12,7 +12,7 @@
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark">PU</div>
-        <div><strong>Print Upscale</strong><span>Studio V2.2 · Experimental</span></div>
+        <div><strong>Print Upscale</strong><span>Studio V2.3.1 · Mask Refinement</span></div>
       </div>
 
       <nav id="toolNav" class="tool-nav">
@@ -218,7 +218,7 @@
           </div>
 
           <div id="benchmarkSettings" class="tool-settings" hidden>
-            <div class="lab-notice"><b>Packaging Safe Pro V0.1 · local</b><span>Chạy bốn pipeline và tạo mask tự động để giảm Detail tại chữ, logo, đường biên và hình học mạnh.</span></div>
+            <div class="lab-notice"><b>Packaging Safe Pro V0.3 · Mask Refinement</b><span>Mask được tạo ở độ phân giải phân tích cao, nối nét chữ và feather biên để giảm block vuông khi blend.</span></div>
 
             <div class="setting-group">
               <label>Photoshop Reference <small>không bắt buộc</small></label>
@@ -234,7 +234,7 @@
                 <label class="benchmark-option"><input class="benchmark-preset" type="checkbox" value="current-photo" data-models="high-fidelity-4x" checked /><span><b>Current · High Fidelity</b><small>Nền fidelity giữ cấu trúc</small></span></label>
                 <label class="benchmark-option"><input class="benchmark-preset" type="checkbox" value="current-packaging" data-models="remacri-4x" checked /><span><b>Current · Packaging</b><small>Mốc Remacri hiện tại</small></span></label>
                 <label class="benchmark-option"><input class="benchmark-preset" type="checkbox" value="official-detail" data-models="realesrgan-x4plus" checked /><span><b>RealESRGAN · Detail</b><small>Tăng texture và độ nét cảm nhận</small></span></label>
-                <label class="benchmark-option"><input class="benchmark-preset" type="checkbox" value="packaging-hybrid" data-models="high-fidelity-4x,realesrgan-x4plus" checked /><span><b>Packaging Hybrid</b><small>High Fidelity + Detail + protection mask</small></span></label>
+                <label class="benchmark-option"><input class="benchmark-preset" type="checkbox" value="packaging-hybrid" data-models="high-fidelity-4x,realesrgan-x4plus" checked /><span><b>Packaging Hybrid</b><small>High Fidelity + Detail + refined protection mask</small></span></label>
               </div>
             </div>
 
