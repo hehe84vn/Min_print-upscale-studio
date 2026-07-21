@@ -5,7 +5,8 @@ const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const { SettingsService } = require('./services/settingsService');
 const { SecureSecretsService } = require('./services/secureSecretsService');
 const engineService = require('./services/engineService');
-const { processImage, suggestedOutput } = require('./services/imageService');
+const { inspectImage, processImage, suggestedOutput } = require('./services/imageService');
+const { testConnection } = require('./services/aiProviderService');
 
 let mainWindow;
 let settingsService;
@@ -17,14 +18,21 @@ const AI_SECRET_NAMES = {
   openai: 'openAiApiKey'
 };
 
+const OUTPUT_FORMATS = {
+  png: { extension: '.png', filter: { name: 'PNG image', extensions: ['png'] } },
+  jpeg: { extension: '.jpg', filter: { name: 'JPEG image', extensions: ['jpg', 'jpeg'] } },
+  tiff: { extension: '.tiff', filter: { name: 'TIFF image', extensions: ['tif', 'tiff'] } },
+  webp: { extension: '.webp', filter: { name: 'WebP image', extensions: ['webp'] } }
+};
+
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1240,
-    height: 820,
-    minWidth: 980,
-    minHeight: 680,
+    width: 1320,
+    height: 860,
+    minWidth: 1040,
+    minHeight: 700,
     backgroundColor: '#111317',
-    title: 'Print Upscale Studio',
+    title: 'Print Upscale Studio V2',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -74,16 +82,25 @@ function registerIpc() {
     return result.canceled ? null : result.filePaths[0];
   });
 
-  ipcMain.handle('file:select-output', async (_event, { inputPath, operation }) => {
-    const defaultPath = suggestedOutput(inputPath, operation);
-    const filters = operation === 'vector-logo'
-      ? [{ name: 'SVG vector', extensions: ['svg'] }]
-      : [{ name: 'PNG image', extensions: ['png'] }];
-    const result = await dialog.showSaveDialog(mainWindow, { defaultPath, filters });
+  ipcMain.handle('file:select-output', async (_event, { inputPath, operation, format }) => {
+    if (operation === 'vector-logo') {
+      const result = await dialog.showSaveDialog(mainWindow, {
+        defaultPath: suggestedOutput(inputPath, operation),
+        filters: [{ name: 'SVG vector', extensions: ['svg'] }]
+      });
+      return result.canceled ? null : result.filePath;
+    }
+
+    const outputFormat = OUTPUT_FORMATS[format] || OUTPUT_FORMATS.png;
+    const result = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: suggestedOutput(inputPath, operation, outputFormat.extension),
+      filters: [outputFormat.filter]
+    });
     return result.canceled ? null : result.filePath;
   });
 
   ipcMain.handle('file:url', async (_event, filePath) => pathToFileURL(filePath).href);
+  ipcMain.handle('image:metadata', async (_event, filePath) => inspectImage(filePath));
 
   ipcMain.handle('image:process', async (_event, payload) => {
     if (!payload?.inputPath || !payload?.outputPath) throw new Error('Thiếu đường dẫn đầu vào hoặc đầu ra.');
@@ -91,6 +108,7 @@ function registerIpc() {
     const outputPath = await processImage({
       ...payload,
       settingsService,
+      secureSecretsService,
       onProgress: (percent, message) => emitProgress(percent, message)
     });
     emitProgress(100, 'Hoàn tất');
@@ -102,7 +120,7 @@ function registerIpc() {
 
   ipcMain.handle('engine:select-binary', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: 'Chọn upscayl-bin',
+      title: 'Chọn bộ xử lý cục bộ',
       properties: ['openFile']
     });
     if (!result.canceled) {
@@ -118,7 +136,7 @@ function registerIpc() {
 
   ipcMain.handle('engine:select-models', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: 'Chọn thư mục model NCNN',
+      title: 'Chọn thư mục model cục bộ',
       properties: ['openDirectory']
     });
     if (!result.canceled) await settingsService.write({ modelsDirectory: result.filePaths[0] });
@@ -147,6 +165,11 @@ function registerIpc() {
     if (!AI_PROVIDERS.has(provider)) throw new Error('Nhà cung cấp AI không hợp lệ.');
     await secureSecretsService.remove(AI_SECRET_NAMES[provider]);
     return getAiSettingsSummary();
+  });
+
+  ipcMain.handle('ai:settings:test', async (_event, provider) => {
+    if (!AI_PROVIDERS.has(provider)) throw new Error('Nhà cung cấp AI không hợp lệ.');
+    return testConnection({ secureSecretsService, provider });
   });
 }
 
