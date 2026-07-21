@@ -7,6 +7,8 @@ const require = createRequire(import.meta.url);
 const sharp = require('sharp');
 const { inspectImage, processImage } = require('../src/main/services/imageService');
 const { buildPrompt } = require('../src/main/services/aiProviderService');
+const { listPresets } = require('../src/main/services/benchmarkService');
+const { EXPERIMENTAL_MODELS } = require('../src/main/services/engineService');
 
 const sourceSvg = Buffer.from(`
   <svg width="96" height="72" xmlns="http://www.w3.org/2000/svg">
@@ -34,6 +36,16 @@ try {
     throw new Error('AI Enhance prompt builder omitted protection requirements.');
   }
   console.log('AI prompt builder OK');
+
+  const benchmarkPresets = listPresets();
+  const expectedPresetIds = ['current-packaging', 'official-fidelity', 'official-detail', 'packaging-hybrid'];
+  if (!expectedPresetIds.every((id) => benchmarkPresets.some((preset) => preset.id === id))) {
+    throw new Error('Model Lab preset registry is incomplete.');
+  }
+  if (!['realesrnet-x4plus', 'realesrgan-x4plus'].every((model) => EXPERIMENTAL_MODELS.includes(model))) {
+    throw new Error('Experimental Real-ESRGAN models are not registered.');
+  }
+  console.log(`Model Lab registry OK: ${benchmarkPresets.length} presets`);
 
   const jobs = [
     ['upscale', 'upscale.png', { scale: 2, useNcnn: false, sharpen: true, dpi: 300 }],
