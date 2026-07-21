@@ -38,7 +38,7 @@ function createWindow() {
     minWidth: 1040,
     minHeight: 700,
     backgroundColor: '#111317',
-    title: 'Print Upscale Studio V2.1 Experimental',
+    title: 'Print Upscale Studio V2.2 Experimental',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
