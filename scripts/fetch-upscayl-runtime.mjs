@@ -1,5 +1,5 @@
 import { createWriteStream } from 'node:fs';
-import { access, chmod, cp, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
 import os from 'node:os';
@@ -103,15 +103,6 @@ async function walk(directory) {
   return files;
 }
 
-async function copySiblingFiles(sourceFile, destinationDirectory) {
-  await mkdir(destinationDirectory, { recursive: true });
-  const sourceDirectory = path.dirname(sourceFile);
-  for (const entry of await readdir(sourceDirectory, { withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-    await cp(path.join(sourceDirectory, entry.name), path.join(destinationDirectory, entry.name));
-  }
-}
-
 async function downloadFirstText(urls, output) {
   for (const url of urls) {
     const response = await fetch(url, { headers: { 'User-Agent': 'Min-Print-Upscale-Studio' } });
@@ -137,9 +128,26 @@ async function downloadRealEsrganLicense(output) {
   ], output);
 }
 
+async function reusableRuntime(manifestPath) {
+  if (args.includes('--force') || !(await exists(manifestPath))) return false;
+  try {
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    if (!Array.isArray(manifest.models) || !MODELS.every((model) => manifest.models.includes(model))) return false;
+    const binaryName = platform === 'win32' ? 'upscayl-bin.exe' : 'upscayl-bin';
+    if (!(await exists(path.join(destination, 'bin', binaryName)))) return false;
+    for (const model of MODELS) {
+      if (!(await exists(path.join(destination, 'models', `${model}.param`)))) return false;
+      if (!(await exists(path.join(destination, 'models', `${model}.bin`)))) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   const manifestPath = path.join(destination, 'runtime-manifest.json');
-  if (!args.includes('--force') && await exists(manifestPath)) {
+  if (await reusableRuntime(manifestPath)) {
     console.log(`[upscayl-runtime] Reusing ${destination}`);
     return;
   }
@@ -155,18 +163,15 @@ async function main() {
     await download(assetUrl, archive);
     await extract(archive, extracted);
 
-    console.log(`[upscayl-runtime] Downloading official Real-ESRGAN runtime and models from ${realEsrganAssetUrl}`);
+    console.log(`[upscayl-runtime] Downloading official Real-ESRGAN model weights from ${realEsrganAssetUrl}`);
     await download(realEsrganAssetUrl, realEsrganArchive);
     await extract(realEsrganArchive, realEsrganExtracted);
 
     const files = await walk(extracted);
     const realEsrganFiles = await walk(realEsrganExtracted);
     const binaryName = platform === 'win32' ? 'upscayl-bin.exe' : 'upscayl-bin';
-    const realEsrganBinaryName = platform === 'win32' ? 'realesrgan-ncnn-vulkan.exe' : 'realesrgan-ncnn-vulkan';
     const binary = files.find((file) => path.basename(file).toLowerCase() === binaryName);
-    const realEsrganBinary = realEsrganFiles.find((file) => path.basename(file).toLowerCase() === realEsrganBinaryName);
     if (!binary) throw new Error(`${binaryName} was not found in ${assetName}.`);
-    if (!realEsrganBinary) throw new Error(`${realEsrganBinaryName} was not found in ${realEsrganAssetName}.`);
 
     const namedFiles = new Map(files.map((file) => [path.basename(file).toLowerCase(), file]));
     const realEsrganNamedFiles = new Map(realEsrganFiles.map((file) => [path.basename(file).toLowerCase(), file]));
@@ -186,7 +191,6 @@ async function main() {
     await rm(destination, { recursive: true, force: true });
     await mkdir(path.join(destination, 'models'), { recursive: true });
     await cp(path.dirname(binary), path.join(destination, 'bin'), { recursive: true, force: true });
-    await copySiblingFiles(realEsrganBinary, path.join(destination, 'real-esrgan-bin'));
 
     for (const model of CORE_MODELS) {
       await cp(namedFiles.get(`${model}.param`), path.join(destination, 'models', `${model}.param`));
@@ -199,42 +203,38 @@ async function main() {
     }
 
     const installedBinary = path.join(destination, 'bin', binaryName);
-    const installedRealEsrganBinary = path.join(destination, 'real-esrgan-bin', realEsrganBinaryName);
-    if (platform !== 'win32') {
-      await chmod(installedBinary, 0o755);
-      await chmod(installedRealEsrganBinary, 0o755);
-    }
+    if (platform !== 'win32') await chmod(installedBinary, 0o755);
 
     await downloadUpscaylLicense(path.join(destination, 'UPSCAYL-AGPL-3.0.txt'));
     await downloadRealEsrganLicense(path.join(destination, 'REAL_ESRGAN-BSD-3-CLAUSE.txt'));
     await writeFile(path.join(destination, 'SOURCE_AND_CREDITS.md'), [
       '# Bundled local AI runtime and model sources',
       '',
-      '## Upscayl runtime',
-      `Release: ${tag}`,
+      '## Native Local AI runtime',
+      `Upscayl release: ${tag}`,
       `Source: https://github.com/upscayl/upscayl/tree/${tag}`,
       'Backend source: https://github.com/upscayl/upscayl-ncnn',
       `Original asset: ${assetUrl}`,
       '',
-      '## Real-ESRGAN experimental benchmark runtime and models',
+      '## Real-ESRGAN experimental benchmark model weights',
       `Release: ${realEsrganTag}`,
       'Source: https://github.com/xinntao/Real-ESRGAN',
       'NCNN source: https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan',
       `Original asset: ${realEsrganAssetUrl}`,
       'Models: realesrnet-x4plus, realesrgan-x4plus',
       '',
+      'The Real-ESRGAN weights are executed by the bundled native Local AI engine for the target platform.',
       'Upscayl and Real-ESRGAN are independent projects. Print Upscale Studio is not an official product of either project.'
     ].join('\n'), 'utf8');
 
     await writeFile(manifestPath, JSON.stringify({
-      schemaVersion: 3,
+      schemaVersion: 4,
       releaseTag: tag,
       assetName,
       assetUrl,
       platform,
       arch,
       binary: `bin/${binaryName}`,
-      realEsrganBinary: `real-esrgan-bin/${realEsrganBinaryName}`,
       models: MODELS,
       modelSources: {
         upscayl: {
@@ -247,7 +247,8 @@ async function main() {
           releaseTag: realEsrganTag,
           assetName: realEsrganAssetName,
           assetUrl: realEsrganAssetUrl,
-          models: REAL_ESRGAN_MODELS
+          models: REAL_ESRGAN_MODELS,
+          runtime: 'bundled-native-local-engine'
         }
       },
       preparedAt: new Date().toISOString()
