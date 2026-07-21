@@ -1,11 +1,11 @@
 (() => {
   function installPhase3Controls() {
-    document.title = 'Print Upscale Studio V2.3 Semantic Guard';
+    document.title = 'Print Upscale Studio V2.3.1 Mask Refinement';
     const brandVersion = document.querySelector('.brand span');
-    if (brandVersion) brandVersion.textContent = 'Studio V2.3 · Semantic Guard';
+    if (brandVersion) brandVersion.textContent = 'Studio V2.3.1 · Mask Refinement';
     const labNotice = document.querySelector('#benchmarkSettings .lab-notice');
     if (labNotice) {
-      labNotice.innerHTML = '<b>Packaging Safe Pro V0.2 · Semantic Guard</b><span>Tách vùng giống chữ/logo khỏi texture, đồng thời kiểm tra và tự phục hồi QR/barcode khi cần.</span>';
+      labNotice.innerHTML = '<b>Packaging Safe Pro V0.3 · Mask Refinement</b><span>Tạo mask độ phân giải cao hơn, nối nét chữ, giảm block vuông và feather biên trước khi blend.</span>';
     }
     const protectionToggle = document.querySelector('.benchmark-protection-toggle');
     if (!protectionToggle || $('semanticGuardControls')) return;
@@ -54,13 +54,13 @@
       items.push(await benchmarkItem(result.label, result.outputPath, result.id));
       await appendMaskItem(
         items,
-        'Packaging Hybrid · Combined Mask',
+        'Packaging Hybrid · Refined Combined Mask',
         result.protection?.maskPath,
         `${result.id}-protection-mask`
       );
       await appendMaskItem(
         items,
-        'Text/Logo Semantic Mask',
+        'Text/Logo Refined Semantic Mask',
         result.protection?.semantic?.maskPath,
         `${result.id}-semantic-mask`
       );
@@ -111,6 +111,7 @@
         ];
         if (result.protection?.enabled) {
           parts.push(`combined mask ${result.protection.coveragePercent}%`);
+          if (result.protection.refinementVersion) parts.push(`refine ${result.protection.refinementVersion}`);
           if (result.protection.semantic?.enabled) {
             parts.push(`text/logo ${result.protection.semantic.coveragePercent}%`);
           }
@@ -129,15 +130,15 @@
       const maskRows = [
         {
           id: `${result.id}-protection-mask`,
-          title: 'Combined Protection Mask',
-          detail: 'Tổng hợp cạnh hình học, vùng text/logo và vùng mã.',
+          title: 'Refined Combined Protection Mask',
+          detail: 'Tổng hợp cạnh hình học, vùng text/logo và vùng mã; đã nối nét và feather biên.',
           value: result.protection?.coveragePercent,
           path: result.protection?.maskPath
         },
         {
           id: `${result.id}-semantic-mask`,
-          title: 'Text/Logo Semantic Mask',
-          detail: 'Vùng chữ/logo ước lượng theo mật độ nét, hướng stroke và độ phẳng cục bộ.',
+          title: 'Refined Text/Logo Semantic Mask',
+          detail: 'Vùng chữ/logo theo cạnh thật ở độ phân giải cao, không còn phóng block bằng nearest-neighbor.',
           value: result.protection?.semantic?.coveragePercent,
           path: result.protection?.semantic?.maskPath
         },
@@ -201,7 +202,7 @@
     const errorCount = result.results.length - successCount;
     const hybrid = result.results.find((entry) => entry.id === 'packaging-hybrid' && entry.protection?.enabled);
     const maskMessage = hybrid
-      ? ` Combined mask phủ ${hybrid.protection.coveragePercent}% ảnh.`
+      ? ` Refined mask phủ ${hybrid.protection.coveragePercent}% ảnh.`
       : '';
     const codeMessage = barcodeStatusText(hybrid?.barcodeGuard);
     const guardMessage = codeMessage ? ` Code Guard: ${codeMessage}.` : '';
@@ -222,7 +223,7 @@
     $('engineDot').classList.toggle('online', ready);
     $('engineStatus').textContent = ready
       ? labReady
-        ? 'Sẵn sàng · Semantic Guard + Code Guard.'
+        ? 'Sẵn sàng · Refined Mask + Code Guard.'
         : 'Sẵn sàng xử lý local. Thiếu RealESRGAN Detail.'
       : 'Chế độ tương thích đang khả dụng.';
 
