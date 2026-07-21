@@ -1,7 +1,7 @@
 {
   "name": "print-upscale-studio",
-  "version": "2.1.0",
-  "description": "Hybrid local and cloud AI image enhancement toolkit for print workflows, with an experimental local model benchmark lab for packaging and photo comparison.",
+  "version": "2.2.0",
+  "description": "Hybrid local and cloud AI image enhancement toolkit for print workflows, with Packaging Safe protection masks for packaging and photo comparison.",
   "main": "src/main/main.js",
   "author": "ngoctunguyenle@gmail.com",
   "license": "MIT",
