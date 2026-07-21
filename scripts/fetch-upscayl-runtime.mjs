@@ -5,7 +5,7 @@ import { pipeline } from 'node:stream/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-const MODELS = [
+const CORE_MODELS = [
   'upscayl-standard-4x',
   'upscayl-lite-4x',
   'high-fidelity-4x',
@@ -14,6 +14,13 @@ const MODELS = [
   'ultrasharp-4x',
   'digital-art-4x'
 ];
+
+const REAL_ESRGAN_MODELS = [
+  'realesrnet-x4plus',
+  'realesrgan-x4plus'
+];
+
+const MODELS = [...CORE_MODELS, ...REAL_ESRGAN_MODELS];
 
 const args = process.argv.slice(2);
 const valueOf = (name, fallback) => {
@@ -27,6 +34,12 @@ const tag = process.env.UPSCAYL_RELEASE_TAG || 'v2.15.0';
 const version = tag.replace(/^v/, '');
 const root = path.resolve(import.meta.dirname, '..');
 const destination = path.join(root, 'vendor', 'upscayl', `${platform}-${arch}`);
+
+const realEsrganTag = 'v0.2.5.0';
+const realEsrganAssetName = platform === 'win32'
+  ? 'realesrgan-ncnn-vulkan-20220424-windows.zip'
+  : 'realesrgan-ncnn-vulkan-20220424-macos.zip';
+const realEsrganAssetUrl = `https://github.com/xinntao/Real-ESRGAN/releases/download/${realEsrganTag}/${realEsrganAssetName}`;
 
 if (!['win32', 'darwin'].includes(platform)) {
   throw new Error(`Unsupported platform: ${platform}`);
@@ -90,16 +103,29 @@ async function walk(directory) {
   return files;
 }
 
-async function downloadLicense(output) {
-  for (const name of ['LICENSE', 'LICENSE.md']) {
-    const url = `https://raw.githubusercontent.com/upscayl/upscayl/${tag}/${name}`;
+async function downloadFirstText(urls, output) {
+  for (const url of urls) {
     const response = await fetch(url, { headers: { 'User-Agent': 'Min-Print-Upscale-Studio' } });
     if (response.ok) {
       await writeFile(output, await response.text(), 'utf8');
       return;
     }
   }
-  throw new Error(`Could not download the Upscayl license for ${tag}.`);
+  throw new Error(`Could not download license: ${urls.join(', ')}`);
+}
+
+async function downloadUpscaylLicense(output) {
+  await downloadFirstText(
+    ['LICENSE', 'LICENSE.md'].map((name) => `https://raw.githubusercontent.com/upscayl/upscayl/${tag}/${name}`),
+    output
+  );
+}
+
+async function downloadRealEsrganLicense(output) {
+  await downloadFirstText([
+    `https://raw.githubusercontent.com/xinntao/Real-ESRGAN/${realEsrganTag}/LICENSE`,
+    'https://raw.githubusercontent.com/xinntao/Real-ESRGAN/master/LICENSE'
+  ], output);
 }
 
 async function main() {
@@ -111,22 +137,37 @@ async function main() {
 
   const temp = await mkdtemp(path.join(os.tmpdir(), 'upscayl-runtime-'));
   const archive = path.join(temp, assetName);
-  const extracted = path.join(temp, 'extracted');
+  const extracted = path.join(temp, 'upscayl-extracted');
+  const realEsrganArchive = path.join(temp, realEsrganAssetName);
+  const realEsrganExtracted = path.join(temp, 'realesrgan-extracted');
 
   try {
     console.log(`[upscayl-runtime] Downloading ${assetUrl}`);
     await download(assetUrl, archive);
     await extract(archive, extracted);
 
+    console.log(`[upscayl-runtime] Downloading official Real-ESRGAN models from ${realEsrganAssetUrl}`);
+    await download(realEsrganAssetUrl, realEsrganArchive);
+    await extract(realEsrganArchive, realEsrganExtracted);
+
     const files = await walk(extracted);
+    const realEsrganFiles = await walk(realEsrganExtracted);
     const binaryName = platform === 'win32' ? 'upscayl-bin.exe' : 'upscayl-bin';
     const binary = files.find((file) => path.basename(file).toLowerCase() === binaryName);
     if (!binary) throw new Error(`${binaryName} was not found in ${assetName}.`);
 
     const namedFiles = new Map(files.map((file) => [path.basename(file).toLowerCase(), file]));
-    for (const model of MODELS) {
+    const realEsrganNamedFiles = new Map(realEsrganFiles.map((file) => [path.basename(file).toLowerCase(), file]));
+
+    for (const model of CORE_MODELS) {
       if (!namedFiles.has(`${model}.param`) || !namedFiles.has(`${model}.bin`)) {
-        throw new Error(`The official archive does not contain the complete ${model} model.`);
+        throw new Error(`The official Upscayl archive does not contain the complete ${model} model.`);
+      }
+    }
+
+    for (const model of REAL_ESRGAN_MODELS) {
+      if (!realEsrganNamedFiles.has(`${model}.param`) || !realEsrganNamedFiles.has(`${model}.bin`)) {
+        throw new Error(`The official Real-ESRGAN archive does not contain the complete ${model} model.`);
       }
     }
 
@@ -134,28 +175,42 @@ async function main() {
     await mkdir(path.join(destination, 'models'), { recursive: true });
     await cp(path.dirname(binary), path.join(destination, 'bin'), { recursive: true, force: true });
 
-    for (const model of MODELS) {
+    for (const model of CORE_MODELS) {
       await cp(namedFiles.get(`${model}.param`), path.join(destination, 'models', `${model}.param`));
       await cp(namedFiles.get(`${model}.bin`), path.join(destination, 'models', `${model}.bin`));
+    }
+
+    for (const model of REAL_ESRGAN_MODELS) {
+      await cp(realEsrganNamedFiles.get(`${model}.param`), path.join(destination, 'models', `${model}.param`));
+      await cp(realEsrganNamedFiles.get(`${model}.bin`), path.join(destination, 'models', `${model}.bin`));
     }
 
     const installedBinary = path.join(destination, 'bin', binaryName);
     if (platform !== 'win32') await chmod(installedBinary, 0o755);
 
-    await downloadLicense(path.join(destination, 'UPSCAYL-AGPL-3.0.txt'));
+    await downloadUpscaylLicense(path.join(destination, 'UPSCAYL-AGPL-3.0.txt'));
+    await downloadRealEsrganLicense(path.join(destination, 'REAL_ESRGAN-BSD-3-CLAUSE.txt'));
     await writeFile(path.join(destination, 'SOURCE_AND_CREDITS.md'), [
-      '# Bundled Upscayl runtime',
+      '# Bundled local AI runtime and model sources',
       '',
+      '## Upscayl runtime',
       `Release: ${tag}`,
       `Source: https://github.com/upscayl/upscayl/tree/${tag}`,
       'Backend source: https://github.com/upscayl/upscayl-ncnn',
       `Original asset: ${assetUrl}`,
       '',
-      'Upscayl is an independent AGPL-3.0 project. Print Upscale Studio is not an official Upscayl product.'
+      '## Real-ESRGAN experimental benchmark models',
+      `Release: ${realEsrganTag}`,
+      'Source: https://github.com/xinntao/Real-ESRGAN',
+      'NCNN source: https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan',
+      `Original asset: ${realEsrganAssetUrl}`,
+      'Models: realesrnet-x4plus, realesrgan-x4plus',
+      '',
+      'Upscayl and Real-ESRGAN are independent projects. Print Upscale Studio is not an official product of either project.'
     ].join('\n'), 'utf8');
 
     await writeFile(manifestPath, JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       releaseTag: tag,
       assetName,
       assetUrl,
@@ -163,6 +218,20 @@ async function main() {
       arch,
       binary: `bin/${binaryName}`,
       models: MODELS,
+      modelSources: {
+        upscayl: {
+          releaseTag: tag,
+          assetName,
+          assetUrl,
+          models: CORE_MODELS
+        },
+        realEsrgan: {
+          releaseTag: realEsrganTag,
+          assetName: realEsrganAssetName,
+          assetUrl: realEsrganAssetUrl,
+          models: REAL_ESRGAN_MODELS
+        }
+      },
       preparedAt: new Date().toISOString()
     }, null, 2), 'utf8');
 
