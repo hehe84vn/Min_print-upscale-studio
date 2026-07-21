@@ -33,6 +33,7 @@ button { color: inherit; }
 .card-title i.online { background: var(--accent); box-shadow: 0 0 12px rgba(183,255,60,.65); }
 .engine-card p { color: var(--muted); font-size: 12px; line-height: 1.45; min-height: 34px; }
 .engine-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.creator-credit { margin: 12px 4px 0; color: #68717d; font-size: 10px; line-height: 1.45; text-align: center; word-break: break-word; }
 .workspace { min-width: 0; overflow: auto; padding: 32px 38px 44px; }
 .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
 .eyebrow { color: var(--accent); font-size: 11px; letter-spacing: .16em; font-weight: 800; margin: 0 0 8px; }
