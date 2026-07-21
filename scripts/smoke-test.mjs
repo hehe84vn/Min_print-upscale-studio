@@ -5,7 +5,8 @@ import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const sharp = require('sharp');
-const { processImage } = require('../src/main/services/imageService');
+const { inspectImage, processImage } = require('../src/main/services/imageService');
+const { buildPrompt } = require('../src/main/services/aiProviderService');
 
 const sourceSvg = Buffer.from(`
   <svg width="96" height="72" xmlns="http://www.w3.org/2000/svg">
@@ -22,10 +23,22 @@ const inputPath = path.join(workspace, 'input.png');
 try {
   await sharp(sourceSvg).png().toFile(inputPath);
 
+  const metadata = await inspectImage(inputPath);
+  if (metadata.width !== 96 || metadata.height !== 72 || !metadata.printSizes?.[300]) {
+    throw new Error('Print Inspector returned unexpected metadata.');
+  }
+  console.log(`Inspector OK: ${metadata.width}x${metadata.height}`);
+
+  const prompt = buildPrompt({ mode: 'safe', protectFace: true, protectText: true, protectLogo: true });
+  if (!prompt.includes('Preserve every face') || !prompt.includes('Preserve all existing text')) {
+    throw new Error('AI Enhance prompt builder omitted protection requirements.');
+  }
+  console.log('AI prompt builder OK');
+
   const jobs = [
-    ['upscale', 'upscale.png', { scale: 2, useNcnn: false, sharpen: true }],
-    ['restore', 'restore.png', { scale: 2, denoise: 1, saturation: 1.05, contrast: 1.05 }],
-    ['text-print', 'text-print.png', { scale: 2, edge: 1.2 }],
+    ['upscale', 'upscale.png', { scale: 2, useNcnn: false, sharpen: true, dpi: 300 }],
+    ['restore', 'restore.png', { scale: 2, denoise: 1, saturation: 1.05, contrast: 1.05, dpi: 300 }],
+    ['text-print', 'text-print.png', { scale: 2, edge: 1.2, dpi: 300 }],
     ['vector-logo', 'vector-logo.svg', {
       colorMode: 'color',
       threshold: 170,
