@@ -1,4 +1,4 @@
-# Print Upscale Studio V2.1 Experimental
+# Print Upscale Studio V2.2 Experimental
 
 Ứng dụng desktop hybrid dành cho workflow hình ảnh, bao bì và in ấn:
 
@@ -7,53 +7,66 @@
 - **Restore Safe**: khử nhiễu, phục hồi tương phản/màu và làm nét có kiểm soát.
 - **Text & Artwork**: tăng độ nét chữ raster mà không OCR, không thay font và không sửa nội dung.
 - **Vector Logo**: chuyển logo màu, logo một màu, con dấu hoặc line art sang SVG bằng VTracer.
-- **Model Lab**: chạy cùng một ảnh qua nhiều model local, nhập Photoshop Reference và so sánh A/B bằng zoom/pan đồng bộ.
+- **Model Lab**: chạy cùng một ảnh qua bốn pipeline local, nhập Photoshop Reference và so sánh A/B bằng zoom/pan đồng bộ.
+- **Packaging Safe Pro V0.1**: tạo protection mask để giảm Detail tại chữ, logo, đường biên và hình học mạnh.
 - **Print Inspector**: hiển thị kích thước pixel, dung lượng, hệ màu và kích thước in tham khảo ở 300 DPI.
 
 Đây là code clean-room mới hoàn toàn. Dự án không chứa code, license key hoặc tài sản của FD Advertising.
 
-## Trạng thái bản 2.1.0
+## Trạng thái bản 2.2.0
 
 - Windows 10/11 x64.
 - macOS 12 trở lên, build riêng Intel x64 và Apple Silicon arm64.
 - Nhúng sẵn runtime Local AI và bảy model Upscayl hiện có.
-- Model Lab bổ sung hai trọng số NCNN chính thức từ Real-ESRGAN và chạy chúng bằng Local AI Engine native của từng nền tảng.
-- Gemini dùng `gemini-3.1-flash-image` hoặc `gemini-3-pro-image`.
-- OpenAI dùng `gpt-image-2` qua Images Edit API.
+- Model Lab bổ sung trọng số NCNN `realesrgan-x4plus` từ Real-ESRGAN và chạy bằng Local AI Engine native của từng nền tảng.
 - API key do người dùng tự nhập và được mã hóa bằng Electron `safeStorage` của hệ điều hành.
-- API key không lưu trong `settings.json`, không gửi về renderer và không commit lên GitHub.
 - AI Cloud cần Internet và phát sinh phí trực tiếp trên tài khoản API của người dùng.
 
-## Model Lab
+## Bốn pipeline giữ lại
 
-Model Lab là khu vực thử nghiệm nội bộ để chọn pipeline tốt hơn cho ảnh chụp, packshot và artwork bao bì. Nó không tự kết luận model nào tốt nhất; người dùng kiểm tra trực tiếp chữ, logo, hình học, màu phẳng, gradient, texture và halo.
+- **Current · High Fidelity**: giữ cấu trúc ảnh và dùng làm nền fidelity.
+- **Current · Packaging**: Remacri hiện tại, phù hợp artwork và bao bì.
+- **RealESRGAN · Detail**: ưu tiên texture và độ nét cảm nhận.
+- **Packaging Hybrid**: High Fidelity + RealESRGAN Detail + protection mask tùy chọn.
 
-Các pipeline hiện có:
+## Packaging Safe Pro V0.1
 
-- **Current · High Fidelity**: model ảnh chụp hiện tại của app.
-- **Current · Packaging**: Remacri hiện tại, dùng làm mốc artwork/bao bì.
-- **RealESRNet x4plus · Fidelity**: ưu tiên cấu trúc và độ trung thực.
-- **RealESRGAN x4plus · Detail**: ưu tiên texture và độ nét cảm nhận.
-- **Packaging Hybrid**: trộn RealESRNet với RealESRGAN ở mức Detail 5–45%, mặc định 20%.
+Khi bật **Tự động bảo vệ chữ, logo và cạnh hình học**, app:
 
-Quy trình test:
+1. Resize ảnh nguồn đúng kích thước đầu ra.
+2. Tạo high-frequency edge mask từ ảnh gốc.
+3. Mở rộng và làm mềm vùng biên để bảo vệ chữ, logo và hình học mạnh.
+4. Cho phép RealESRGAN Detail tác động nhiều hơn ở vùng tối của mask.
+5. Giữ High Fidelity ở vùng sáng của mask.
+6. Xuất thêm file `protection-mask.png` để kiểm tra trực tiếp.
+
+Trong mask:
+
+- vùng sáng: ưu tiên High Fidelity;
+- vùng tối: cho phép nhận thêm RealESRGAN Detail.
+
+Điều chỉnh:
+
+- **Detail trong Hybrid**: 5–45%, mặc định 20%; bao bì nên thử 15–25%.
+- **Độ nhạy protection mask**: 20–95, mặc định 65.
+- Tăng độ nhạy khi chữ/cạnh chưa được bảo vệ đủ.
+- Giảm độ nhạy khi mask phủ quá nhiều texture tự nhiên.
+
+Đây là mask hình học dựa trên cạnh, chưa phải OCR hoặc semantic segmentation. Barcode, QR, chữ nhỏ, màu spot và artwork cuối cùng vẫn phải kiểm tra trong Photoshop/Illustrator.
+
+## Quy trình test
 
 1. Chọn ảnh nguồn.
 2. Chuyển sang **Model Lab · Experimental**.
 3. Chọn tỷ lệ 2×, 3× hoặc 4×.
-4. Có thể nhập file đã upscale bằng Photoshop làm **Photoshop Reference**.
-5. Chọn các model cần chạy và thư mục lưu.
-6. Chạy Model Lab.
-7. Dùng hai menu A/B, thanh chia và zoom tới 800% để so cùng một vị trí.
+4. Có thể nhập file Photoshop Reference.
+5. Giữ bốn pipeline hoặc bỏ chọn pipeline không cần chạy.
+6. Bật protection mask, thử độ nhạy 55, 65 và 75.
+7. Chạy Model Lab.
+8. So sánh A/B ở 100%, 200% và 400%.
+9. Chọn `Packaging Hybrid · Protection Mask` để xem vùng được bảo vệ.
 
-Model Lab luôn xuất PNG lossless và tạo `benchmark-report.json` trong thư mục kết quả. File report ghi thời gian, kích thước, model, lỗi và đường dẫn đầu ra.
-
-### Lưu ý cho bao bì
-
-- `RealESRNet x4plus` nên được kiểm tra trước khi cần giữ chữ, logo và hình học.
-- `RealESRGAN x4plus` có thể cho texture rõ hơn nhưng dễ tạo halo hoặc thay đổi chi tiết nhỏ.
-- `Packaging Hybrid` mặc định chỉ dùng 20% ảnh Detail; đây chưa phải hệ thống mask bảo vệ chữ/logo hoàn chỉnh.
-- Barcode, QR, chữ nhỏ, màu spot và artwork cuối cùng vẫn phải kiểm tra trong Photoshop/Illustrator.
+Model Lab luôn xuất PNG lossless và tạo `benchmark-report.json`. Report ghi model, thời gian, kích thước, Detail Strength, độ nhạy mask và tỷ lệ diện tích được bảo vệ.
 
 ## Cấu hình AI Cloud
 
@@ -64,24 +77,6 @@ Trong ứng dụng, mở **Cài đặt → AI Provider & API key**:
 3. Bấm **Lưu cài đặt**.
 4. Bấm **Kiểm tra** để xác nhận key và kết nối.
 5. Mở **AI Enhance**, chọn provider, model và mức tái tạo.
-
-### Gemini
-
-- Nano Banana 2: `gemini-3.1-flash-image`.
-- Nano Banana Pro: `gemini-3-pro-image`.
-- V2 yêu cầu đầu ra 2K hoặc 4K bằng Gemini Interactions API.
-
-### OpenAI
-
-- Model: `gpt-image-2`.
-- Dùng chế độ image edit với input fidelity cao.
-- Kích thước đầu ra để API tự lựa chọn theo ảnh nguồn.
-
-## Các mức AI Enhance
-
-- **Safe**: ưu tiên giữ nhận dạng, bố cục, màu, chữ và logo sát ảnh gốc.
-- **Balanced**: tái tạo texture vừa phải, phù hợp ảnh quảng cáo và ảnh chụp thông thường.
-- **Creative**: tái dựng mạnh hơn, có nguy cơ thay đổi chi tiết nhỏ.
 
 AI tạo sinh không bảo đảm giữ chính xác tuyệt đối chữ, logo, barcode, màu in hoặc khuôn mặt. Luôn kiểm tra Before/After trước khi dùng cho artwork chính thức.
 
@@ -94,21 +89,15 @@ npm install
 npm start
 ```
 
-Kiểm tra cú pháp và chạy smoke test cho các pipeline local:
+Kiểm tra cú pháp và chạy smoke test:
 
 ```bash
 npm run check
 ```
 
-Smoke test không gọi Gemini, OpenAI hoặc chạy model NCNN lớn và không phát sinh phí API.
+Smoke test kiểm tra cả protection mask và protected blend, nhưng không gọi Gemini/OpenAI hoặc chạy model NCNN lớn.
 
 ## Local AI Engine
-
-Runtime được nhúng trong installer all-in-one. Người dùng thông thường chỉ thấy trạng thái **Local AI Engine: Sẵn sàng**.
-
-Khi cần xử lý sự cố, mở:
-
-**Cài đặt → Cấu hình Local Engine nâng cao**
 
 Model Upscayl hiện có:
 
@@ -120,12 +109,11 @@ Model Upscayl hiện có:
 - `ultrasharp-4x`
 - `digital-art-4x`
 
-Model chính thức từ Real-ESRGAN trong Model Lab:
+Model Real-ESRGAN trong Model Lab:
 
-- `realesrnet-x4plus`
 - `realesrgan-x4plus`
 
-Build script tải runtime native và model hiện có từ release Upscayl, tải thêm hai trọng số model từ release chính thức Real-ESRGAN, chép license và ghi `SOURCE_AND_CREDITS.md` vào thư mục runtime của installer.
+Build script tải runtime/model từ release chính thức, chép license và ghi `SOURCE_AND_CREDITS.md` vào thư mục runtime của installer.
 
 ## Build file cài đặt
 
@@ -136,38 +124,27 @@ npm install
 npm run dist:win
 ```
 
-Kết quả trong `release/`:
-
-- NSIS installer `.exe`
-- Portable `.exe`
-
-### macOS
+### macOS Apple Silicon
 
 ```bash
 npm install
 npm run dist:mac:arm64
-# hoặc trên Mac Intel
+```
+
+### macOS Intel
+
+```bash
+npm install
 npm run dist:mac:x64
 ```
 
-Kết quả trong `release/`:
+Workflow GitHub Actions upload các artifact:
 
-- `.dmg`
-
-## GitHub Actions
-
-Workflow `.github/workflows/build-desktop.yml`:
-
-- kiểm tra cú pháp và smoke test trên Ubuntu;
-- build Windows x64;
-- build macOS Apple Silicon và Intel;
-- tải runtime/model chính thức trong lúc build;
-- upload installer vào **Actions → Artifacts**;
-- khi push tag `v*`, tự tạo GitHub Release.
+- `print-upscale-studio-v2.2-windows-x64`
+- `print-upscale-studio-v2.2-macos-arm64`
+- `print-upscale-studio-v2.2-macos-x64`
 
 ## Chưa ký số
-
-Workflow mặc định xuất file unsigned:
 
 - Windows có thể hiện SmartScreen “Unknown publisher”.
 - macOS có thể chặn Gatekeeper.
