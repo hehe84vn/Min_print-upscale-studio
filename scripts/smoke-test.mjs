@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -25,8 +25,31 @@ const sourceSvg = Buffer.from(`
   </svg>
 `);
 
-const qrText = 'PRINT-UPSCALE-STUDIO-V2.3-CODE-GUARD';
-const qrFixtureBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAUoAAAFKAQAAAABTUiuoAAACDklEQVR4nO2aQYrjMBBFX40NXsrQB+ijKDeYM82R5gb2UXKAgLRssPmzkNxOuheTZLBjmKpFsOAtPhSSvn7FxJ01/riXBEcdddRRRx3dErVaLXbKZow95avUaXMBjj6CRklSAggSZDMNNJIk3aLbCHD0ETR/biFmgzBhJ8DM2n0EOHpHtV/WArCYkO0jwNF/6JYRkoz8Nom8hwBHn0CDpAGQ0ry4DEDStI8AR+9HRzMz68FOuRMxATAXS7iHAEfvqXISrvGTyLPVQzDcplIv1+ooxaPH9cALEoSpfsVE9ffDy7U6WlANubtpWe5E8fI0/t46DFr2lqQJKTXSQHO9o5QWxPfW69GlFTTSEOqZWPsWaozh3TocOlvNm3Ins/cPA2aTUiM77SHA0b9X8YQWBRY1rxZRFs/d4jc2FODo456QMKEBKFYjlhsMgEbuCY+C1uQp/u4EIcHYX9D4PkFMb9M1+nKtji45Yfgw4rmdqIFuCTDKr7YU4OgzDl7Xs6xYXszLs9lPwkOh6+y4RoTZDHILY++v48Oh6+y4tqdZ7GBuq/04jFZH19lxTLPpV0/J5YmqU+QDaf1/0a/TSKCZLAo0/ry0GvvLgrxcq6PfJv1j31QTGM+djLCxAEefQJfZMTBb+ZsaUK4sv7eOgnLl2z9zi7KIaZn0u4M/CPp9dny1FPh8y1FHHXXU0SOhfwCJlTLXTUat8wAAAABJRU5ErkJggg==';
+function invalidBarcodeArtwork() {
+  const widths = [2, 1, 3, 2, 4, 1, 2, 3];
+  let x = 92;
+  let black = true;
+  const bars = [];
+  for (let index = 0; index < 92; index += 1) {
+    const width = widths[index % widths.length];
+    if (black) {
+      const guard = index < 4 || index > 87 || index === 44 || index === 45;
+      bars.push(`<rect x="${x}" y="110" width="${width}" height="${guard ? 150 : 132}" fill="black"/>`);
+    }
+    x += width;
+    black = !black;
+  }
+
+  return Buffer.from(`
+    <svg width="640" height="420" xmlns="http://www.w3.org/2000/svg">
+      <rect width="640" height="420" fill="white"/>
+      <text x="78" y="75" font-size="28" font-family="sans-serif" fill="#164a2a">INVALID EAN ARTWORK</text>
+      ${bars.join('')}
+      <text x="82" y="292" font-size="30" font-family="monospace" letter-spacing="5" fill="black">8938549876543</text>
+      <rect x="55" y="45" width="390" height="300" fill="none" stroke="#d8d8d8" stroke-width="2"/>
+    </svg>
+  `);
+}
 
 const settingsService = { read: async () => ({}) };
 const workspace = await mkdtemp(path.join(os.tmpdir(), 'print-upscale-studio-'));
@@ -112,27 +135,23 @@ try {
   }
   console.log(`Semantic protection OK: ${blend.protection.coveragePercent}% combined coverage`);
 
-  const qrPath = path.join(workspace, 'code-guard-qr.png');
-  const qrBuffer = Buffer.from(qrFixtureBase64, 'base64');
-  if (qrBuffer.length < 100 || qrFixtureBase64.length % 4 !== 0) {
-    throw new Error('QR fixture is not a valid complete base64 PNG.');
+  const barcodePath = path.join(workspace, 'invalid-barcode-artwork.png');
+  await sharp(invalidBarcodeArtwork()).png().toFile(barcodePath);
+  const barcodeDetection = await decodeBarcode(barcodePath);
+  if (!barcodeDetection.detected || !barcodeDetection.visualOnly || barcodeDetection.formatName !== 'BARCODE_LIKE') {
+    throw new Error(`Visual Barcode Guard fallback failed: ${barcodeDetection.error || barcodeDetection.valuePreview || 'unknown'}`);
   }
-  await writeFile(qrPath, qrBuffer);
-  const qrDetection = await decodeBarcode(qrPath);
-  if (!qrDetection.detected || qrDetection.value !== qrText || qrDetection.formatName !== 'QR_CODE') {
-    throw new Error(`QR Code Guard decode failed: ${qrDetection.error || qrDetection.valuePreview || 'unknown'}`);
-  }
-  const qrMaskPath = path.join(workspace, 'qr-mask.png');
-  const qrMask = await createBarcodeMask({
-    detection: qrDetection,
-    width: 512,
-    height: 512,
-    outputPath: qrMaskPath
+  const barcodeMaskPath = path.join(workspace, 'barcode-mask.png');
+  const barcodeMask = await createBarcodeMask({
+    detection: barcodeDetection,
+    width: 1280,
+    height: 840,
+    outputPath: barcodeMaskPath
   });
-  if (!qrMask?.rect || (await stat(qrMaskPath)).size < 64) {
-    throw new Error('QR Code Guard mask was not created.');
+  if (!barcodeMask?.rect || (await stat(barcodeMaskPath)).size < 64) {
+    throw new Error('Visual Barcode Guard mask was not created.');
   }
-  console.log(`QR Code Guard OK: ${qrDetection.formatName}`);
+  console.log(`Visual Barcode Guard OK: ${barcodeDetection.formatName} confidence ${barcodeDetection.confidence}`);
 
   const jobs = [
     ['upscale', 'upscale.png', { scale: 2, useNcnn: false, sharpen: true, dpi: 300 }],
