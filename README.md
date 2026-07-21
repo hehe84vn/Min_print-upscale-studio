@@ -17,7 +17,7 @@
 - Windows 10/11 x64.
 - macOS 12 trở lên, build riêng Intel x64 và Apple Silicon arm64.
 - Nhúng sẵn runtime Local AI và bảy model Upscayl hiện có.
-- Model Lab nhúng thêm runtime NCNN và hai model chính thức từ Real-ESRGAN.
+- Model Lab bổ sung hai trọng số NCNN chính thức từ Real-ESRGAN và chạy chúng bằng Local AI Engine native của từng nền tảng.
 - Gemini dùng `gemini-3.1-flash-image` hoặc `gemini-3-pro-image`.
 - OpenAI dùng `gpt-image-2` qua Images Edit API.
 - API key do người dùng tự nhập và được mã hóa bằng Electron `safeStorage` của hệ điều hành.
@@ -125,7 +125,7 @@ Model chính thức từ Real-ESRGAN trong Model Lab:
 - `realesrnet-x4plus`
 - `realesrgan-x4plus`
 
-Build script tải các runtime/model từ release chính thức, chép license và ghi `SOURCE_AND_CREDITS.md` vào thư mục runtime của installer.
+Build script tải runtime native và model hiện có từ release Upscayl, tải thêm hai trọng số model từ release chính thức Real-ESRGAN, chép license và ghi `SOURCE_AND_CREDITS.md` vào thư mục runtime của installer.
 
 ## Build file cài đặt
 
