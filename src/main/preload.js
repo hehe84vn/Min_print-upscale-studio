@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld('studio', {
   selectEngineBinary: () => ipcRenderer.invoke('engine:select-binary'),
   selectModelsDirectory: () => ipcRenderer.invoke('engine:select-models'),
   clearEngine: () => ipcRenderer.invoke('engine:clear'),
+  getAiSettings: () => ipcRenderer.invoke('ai:settings:get'),
+  saveAiSettings: (payload) => ipcRenderer.invoke('ai:settings:save', payload),
+  clearAiKey: (provider) => ipcRenderer.invoke('ai:settings:clear-key', provider),
   onProgress: (callback) => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('job:progress', listener);
