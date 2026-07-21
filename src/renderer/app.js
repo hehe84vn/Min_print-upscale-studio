@@ -6,7 +6,14 @@ const state = {
   engine: null,
   aiSettings: null,
   sourceUrl: null,
-  resultUrl: null
+  resultUrl: null,
+  benchmark: {
+    outputRoot: null,
+    sessionDirectory: null,
+    referencePath: null,
+    results: [],
+    items: []
+  }
 };
 
 const toolInfo = {
@@ -14,7 +21,8 @@ const toolInfo = {
   'ai-enhance': ['AI Enhance', 'Tái tạo chi tiết bằng Gemini hoặc OpenAI với mức kiểm soát phù hợp.'],
   restore: ['Restore Safe', 'Phục hồi ảnh nhẹ theo hướng bảo toàn, không sinh chi tiết giả.'],
   'text-print': ['Text & Artwork', 'Làm nét chữ và artwork raster mà không OCR hoặc thay font.'],
-  'vector-logo': ['Vector Logo', 'Chuyển logo màu, con dấu hoặc line art thành SVG vector.']
+  'vector-logo': ['Vector Logo', 'Chuyển logo màu, con dấu hoặc line art thành SVG vector.'],
+  'model-lab': ['Model Lab · Experimental', 'Chạy cùng một ảnh qua nhiều model local để so sánh với Photoshop và chọn pipeline phù hợp cho bao bì.']
 };
 
 const providerModels = {
@@ -37,14 +45,48 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 ** index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
+function formatDuration(milliseconds) {
+  const seconds = Math.max(0, Number(milliseconds) || 0) / 1000;
+  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)} giây`;
+  return `${Math.floor(seconds / 60)} phút ${Math.round(seconds % 60)} giây`;
+}
+
 function selectedAiMode() {
   return document.querySelector('input[name="aiMode"]:checked')?.value || 'safe';
 }
 
+function syncOutputUi() {
+  if (state.tool === 'model-lab') {
+    $('outputLabel').textContent = 'Thư mục lưu benchmark';
+    $('outputName').textContent = state.benchmark.outputRoot ? fileName(state.benchmark.outputRoot) : 'Chọn thư mục';
+  } else {
+    $('outputLabel').textContent = 'File đầu ra';
+    $('outputName').textContent = state.outputPath ? fileName(state.outputPath) : 'Chọn nơi lưu';
+  }
+}
+
 function resetOutput() {
   state.outputPath = null;
-  $('outputName').textContent = 'Chọn nơi lưu';
   $('resultBox').hidden = true;
+  syncOutputUi();
+}
+
+function resetBenchmarkSession({ keepOutputRoot = true } = {}) {
+  const outputRoot = keepOutputRoot ? state.benchmark.outputRoot : null;
+  state.benchmark = {
+    outputRoot,
+    sessionDirectory: null,
+    referencePath: null,
+    results: [],
+    items: []
+  };
+  $('referenceName').textContent = 'Chọn ảnh Photoshop';
+  $('clearReferenceBtn').disabled = true;
+  $('benchmarkSummaryCard').hidden = true;
+  $('benchmarkResultList').replaceChildren();
+  $('benchmarkBeforeSelect').replaceChildren();
+  $('benchmarkAfterSelect').replaceChildren();
+  syncOutputUi();
 }
 
 function showSourceOnly() {
@@ -53,16 +95,21 @@ function showSourceOnly() {
   $('sourceStage').hidden = !state.inputPath;
 }
 
-async function showComparison(outputPath) {
-  if (state.tool === 'vector-logo') return;
-  state.resultUrl = await window.studio.fileUrl(outputPath);
-  $('beforeImage').src = state.sourceUrl;
-  $('afterImage').src = `${state.resultUrl}?t=${Date.now()}`;
+function showComparisonUrls(beforeUrl, afterUrl) {
+  if (!beforeUrl || !afterUrl) return;
+  $('beforeImage').src = beforeUrl;
+  $('afterImage').src = afterUrl;
   $('sourceStage').hidden = true;
   $('compareStage').hidden = false;
   $('compareControls').hidden = false;
   $('compareSlider').value = '50';
   updateCompare(50);
+}
+
+async function showComparison(outputPath) {
+  if (state.tool === 'vector-logo') return;
+  state.resultUrl = await window.studio.fileUrl(outputPath);
+  showComparisonUrls(state.sourceUrl, `${state.resultUrl}?t=${Date.now()}`);
 }
 
 function updateCompare(value) {
@@ -85,6 +132,7 @@ async function setInput(inputPath) {
   state.inputPath = inputPath;
   state.sourceUrl = await window.studio.fileUrl(inputPath);
   resetOutput();
+  resetBenchmarkSession({ keepOutputRoot: true });
 
   $('inputName').textContent = fileName(inputPath);
   $('previewImage').src = state.sourceUrl;
@@ -130,26 +178,53 @@ function selectTool(tool) {
   $('restoreSettings').hidden = tool !== 'restore';
   $('textSettings').hidden = tool !== 'text-print';
   $('vectorSettings').hidden = tool !== 'vector-logo';
+  $('benchmarkSettings').hidden = tool !== 'model-lab';
 
   $('scaleSetting').hidden = ['ai-enhance', 'vector-logo'].includes(tool);
   $('dpiSetting').hidden = tool === 'vector-logo';
-  $('formatSetting').hidden = tool === 'vector-logo';
+  $('formatSetting').hidden = ['vector-logo', 'model-lab'].includes(tool);
 
   const isCloud = tool === 'ai-enhance';
-  $('privacyBadge').textContent = isCloud ? 'Ảnh được gửi tới AI Cloud' : 'Ảnh không rời khỏi máy';
+  const isLab = tool === 'model-lab';
+  $('privacyBadge').textContent = isCloud
+    ? 'Ảnh được gửi tới AI Cloud'
+    : isLab
+      ? 'Model Lab · xử lý local'
+      : 'Ảnh không rời khỏi máy';
   $('privacyBadge').classList.toggle('cloud', isCloud);
-  $('runBtn').textContent = isCloud ? 'Tăng cường bằng AI' : tool === 'vector-logo' ? 'Tạo SVG vector' : 'Xử lý ảnh';
+  $('privacyBadge').classList.toggle('lab', isLab);
+  $('runBtn').textContent = isCloud
+    ? 'Tăng cường bằng AI'
+    : tool === 'vector-logo'
+      ? 'Tạo SVG vector'
+      : isLab
+        ? 'Chạy Model Lab'
+        : 'Xử lý ảnh';
 
   if (isCloud && state.aiSettings) {
     $('jobProviderSelect').value = state.aiSettings.provider || 'gemini';
     updateProviderModels();
   }
-  resetOutput();
+
+  if (!isLab) state.outputPath = null;
+  $('benchmarkSummaryCard').hidden = !(isLab && state.benchmark.results.length);
+  syncOutputUi();
+  $('resultBox').hidden = true;
   showSourceOnly();
 }
 
 async function chooseOutput() {
   if (!state.inputPath) return;
+
+  if (state.tool === 'model-lab') {
+    const directory = await window.studio.selectBenchmarkOutputDirectory();
+    if (directory) {
+      state.benchmark.outputRoot = directory;
+      syncOutputUi();
+    }
+    return;
+  }
+
   const outputPath = await window.studio.selectOutput({
     inputPath: state.inputPath,
     operation: state.tool,
@@ -157,8 +232,22 @@ async function chooseOutput() {
   });
   if (outputPath) {
     state.outputPath = outputPath;
-    $('outputName').textContent = fileName(outputPath);
+    syncOutputUi();
   }
+}
+
+async function chooseReference() {
+  const referencePath = await window.studio.selectReference();
+  if (!referencePath) return;
+  state.benchmark.referencePath = referencePath;
+  $('referenceName').textContent = fileName(referencePath);
+  $('clearReferenceBtn').disabled = false;
+}
+
+function clearReference() {
+  state.benchmark.referencePath = null;
+  $('referenceName').textContent = 'Chọn ảnh Photoshop';
+  $('clearReferenceBtn').disabled = true;
 }
 
 function commonRasterOptions() {
@@ -221,6 +310,10 @@ function optionsForTool() {
   };
 }
 
+function selectedBenchmarkPresetIds() {
+  return [...document.querySelectorAll('.benchmark-preset:checked:not(:disabled)')].map((input) => input.value);
+}
+
 async function ensureAiConfigured() {
   const settings = await window.studio.getAiSettings();
   renderAiSettings(settings);
@@ -232,13 +325,120 @@ async function ensureAiConfigured() {
   }
 }
 
+async function benchmarkItem(label, pathValue, id) {
+  return {
+    id,
+    label,
+    path: pathValue,
+    url: pathValue ? `${await window.studio.fileUrl(pathValue)}?t=${Date.now()}` : null
+  };
+}
+
+async function renderBenchmarkResults(runResult) {
+  const items = [await benchmarkItem('Ảnh gốc', state.inputPath, 'source')];
+  if (state.benchmark.referencePath) {
+    items.push(await benchmarkItem('Photoshop Reference', state.benchmark.referencePath, 'reference'));
+  }
+
+  for (const result of runResult.results.filter((entry) => entry.outputPath && !entry.error)) {
+    items.push(await benchmarkItem(result.label, result.outputPath, result.id));
+  }
+  state.benchmark.items = items;
+
+  const beforeSelect = $('benchmarkBeforeSelect');
+  const afterSelect = $('benchmarkAfterSelect');
+  beforeSelect.replaceChildren();
+  afterSelect.replaceChildren();
+  for (const item of items) {
+    for (const select of [beforeSelect, afterSelect]) {
+      const option = document.createElement('option');
+      option.value = item.id;
+      option.textContent = item.label;
+      select.append(option);
+    }
+  }
+
+  beforeSelect.value = items.some((item) => item.id === 'reference') ? 'reference' : 'source';
+  const preferredAfter = ['official-fidelity', 'packaging-hybrid', 'official-detail', 'current-packaging']
+    .find((id) => items.some((item) => item.id === id));
+  afterSelect.value = preferredAfter || items.find((item) => item.id !== beforeSelect.value)?.id || beforeSelect.value;
+
+  const resultList = $('benchmarkResultList');
+  resultList.replaceChildren();
+  for (const result of runResult.results) {
+    const row = document.createElement('div');
+    row.className = `benchmark-result-row${result.error ? ' error' : ''}`;
+    if (!result.error) row.dataset.itemId = result.id;
+
+    const info = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = result.label;
+    const detail = document.createElement('small');
+    detail.textContent = result.error
+      ? result.error
+      : `${result.metadata?.width || '—'} × ${result.metadata?.height || '—'} px · ${formatBytes(result.metadata?.sizeBytes)}`;
+    info.append(title, detail);
+
+    const time = document.createElement('time');
+    time.textContent = formatDuration(result.durationMs);
+    row.append(info, time);
+    resultList.append(row);
+  }
+
+  $('benchmarkFolderName').textContent = runResult.outputDirectory;
+  $('benchmarkSummaryCard').hidden = false;
+  await updateBenchmarkComparison();
+}
+
+async function updateBenchmarkComparison() {
+  const beforeId = $('benchmarkBeforeSelect').value;
+  const afterId = $('benchmarkAfterSelect').value;
+  const before = state.benchmark.items.find((item) => item.id === beforeId);
+  const after = state.benchmark.items.find((item) => item.id === afterId);
+  if (!before?.url || !after?.url) return;
+  showComparisonUrls(before.url, after.url);
+}
+
+async function runBenchmarkLab() {
+  if (!state.benchmark.outputRoot) await chooseOutput();
+  if (!state.benchmark.outputRoot) return;
+
+  const presetIds = selectedBenchmarkPresetIds();
+  if (!presetIds.length) throw new Error('Chọn ít nhất một model trong Model Lab.');
+
+  const result = await window.studio.runBenchmark({
+    inputPath: state.inputPath,
+    outputDirectory: state.benchmark.outputRoot,
+    referencePath: state.benchmark.referencePath,
+    presetIds,
+    scale: Number($('scaleSelect').value),
+    dpi: Number($('dpiSelect').value),
+    blendStrength: Number($('blendStrength').value) / 100
+  });
+
+  state.benchmark.sessionDirectory = result.outputDirectory;
+  state.benchmark.results = result.results;
+  await renderBenchmarkResults(result);
+
+  const successCount = result.results.filter((entry) => !entry.error && entry.outputPath).length;
+  const errorCount = result.results.length - successCount;
+  $('resultBox').classList.toggle('error', successCount === 0);
+  $('resultBox').textContent = errorCount
+    ? `Model Lab hoàn tất ${successCount}/${result.results.length} kết quả. Có ${errorCount} model lỗi. Đã lưu tại: ${result.outputDirectory}`
+    : `Model Lab hoàn tất ${successCount} kết quả. Đã lưu tại: ${result.outputDirectory}`;
+  $('resultBox').hidden = false;
+}
+
 async function run() {
   if (state.busy || !state.inputPath) return;
 
   try {
     if (state.tool === 'ai-enhance') await ensureAiConfigured();
-    if (!state.outputPath) await chooseOutput();
-    if (!state.outputPath) return;
+
+    if (state.tool !== 'model-lab') {
+      if (!state.outputPath) await chooseOutput();
+      if (!state.outputPath) return;
+    }
 
     state.busy = true;
     $('runBtn').disabled = true;
@@ -246,6 +446,11 @@ async function run() {
     $('resultBox').hidden = true;
     $('progressBar').style.width = '1%';
     $('progressText').textContent = 'Đang chuẩn bị...';
+
+    if (state.tool === 'model-lab') {
+      await runBenchmarkLab();
+      return;
+    }
 
     const result = await window.studio.process({
       operation: state.tool,
@@ -272,13 +477,23 @@ async function refreshEngine(statusPromise) {
   const status = await statusPromise;
   state.engine = status;
   const ready = status.configured && status.availableModels.length > 0;
+  const labReady = ['realesrnet-x4plus', 'realesrgan-x4plus'].every((model) => status.availableModels.includes(model));
   $('engineDot').classList.toggle('online', ready);
   $('engineStatus').textContent = ready
-    ? 'Sẵn sàng xử lý trên thiết bị.'
+    ? labReady
+      ? 'Sẵn sàng · gồm model Model Lab.'
+      : 'Sẵn sàng xử lý local. Model Lab Pro chưa đủ.'
     : 'Chế độ tương thích đang khả dụng.';
 
   [...$('modelSelect').options].forEach((option) => {
     option.disabled = status.configured && !status.availableModels.includes(option.value);
+  });
+
+  document.querySelectorAll('.benchmark-preset').forEach((input) => {
+    const requiredModels = String(input.dataset.models || '').split(',').filter(Boolean);
+    const available = requiredModels.every((model) => status.availableModels.includes(model));
+    input.disabled = status.configured && !available;
+    input.closest('.benchmark-option')?.setAttribute('title', available ? '' : `Thiếu model: ${requiredModels.filter((model) => !status.availableModels.includes(model)).join(', ')}`);
   });
 }
 
@@ -390,20 +605,30 @@ async function clearAiKey(provider) {
   }
 }
 
-function bindRange(id, outputId) {
+function bindRange(id, outputId, formatter = (value) => value) {
   const input = $(id);
   const output = $(outputId);
-  input.addEventListener('input', () => { output.textContent = input.value; });
+  input.addEventListener('input', () => { output.textContent = formatter(input.value); });
 }
 
 $('chooseInputBtn').addEventListener('click', chooseInput);
 $('changeInputBtn').addEventListener('click', chooseInput);
 $('chooseOutputBtn').addEventListener('click', chooseOutput);
+$('chooseReferenceBtn').addEventListener('click', chooseReference);
+$('clearReferenceBtn').addEventListener('click', clearReference);
 $('runBtn').addEventListener('click', run);
 $('showSourceBtn').addEventListener('click', showSourceOnly);
 $('compareSlider').addEventListener('input', (event) => updateCompare(event.target.value));
 $('formatSelect').addEventListener('change', resetOutput);
 $('jobProviderSelect').addEventListener('change', updateProviderModels);
+$('benchmarkBeforeSelect').addEventListener('change', updateBenchmarkComparison);
+$('benchmarkAfterSelect').addEventListener('change', updateBenchmarkComparison);
+$('benchmarkResultList').addEventListener('click', (event) => {
+  const row = event.target.closest('[data-item-id]');
+  if (!row) return;
+  $('benchmarkAfterSelect').value = row.dataset.itemId;
+  updateBenchmarkComparison();
+});
 
 $('toolNav').addEventListener('click', (event) => {
   const button = event.target.closest('.nav-item');
@@ -457,6 +682,7 @@ bindRange('contrast', 'contrastValue');
 bindRange('threshold', 'thresholdValue');
 bindRange('turdSize', 'turdValue');
 bindRange('edge', 'edgeValue');
+bindRange('blendStrength', 'blendStrengthValue', (value) => `${value}%`);
 updateProviderModels();
 loadAiSettings();
 refreshEngine(window.studio.getEngineStatus());
