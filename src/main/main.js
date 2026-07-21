@@ -5,6 +5,7 @@ const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const { SettingsService } = require('./services/settingsService');
 const { SecureSecretsService } = require('./services/secureSecretsService');
 const engineService = require('./services/engineService');
+const benchmarkService = require('./services/benchmarkService');
 const { inspectImage, processImage, suggestedOutput } = require('./services/imageService');
 const { testConnection } = require('./services/aiProviderService');
 
@@ -18,6 +19,11 @@ const AI_SECRET_NAMES = {
   openai: 'openAiApiKey'
 };
 
+const IMAGE_FILTER = {
+  name: 'Images',
+  extensions: ['png', 'jpg', 'jpeg', 'webp', 'tif', 'tiff', 'bmp']
+};
+
 const OUTPUT_FORMATS = {
   png: { extension: '.png', filter: { name: 'PNG image', extensions: ['png'] } },
   jpeg: { extension: '.jpg', filter: { name: 'JPEG image', extensions: ['jpg', 'jpeg'] } },
@@ -27,12 +33,12 @@ const OUTPUT_FORMATS = {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1320,
-    height: 860,
+    width: 1380,
+    height: 900,
     minWidth: 1040,
     minHeight: 700,
     backgroundColor: '#111317',
-    title: 'Print Upscale Studio V2',
+    title: 'Print Upscale Studio V2.1 Experimental',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -77,7 +83,16 @@ function registerIpc() {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Chọn ảnh nguồn',
       properties: ['openFile'],
-      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'tif', 'tiff', 'bmp'] }]
+      filters: [IMAGE_FILTER]
+    });
+    return result.canceled ? null : result.filePaths[0];
+  });
+
+  ipcMain.handle('file:select-reference', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Chọn ảnh Photoshop Reference',
+      properties: ['openFile'],
+      filters: [IMAGE_FILTER]
     });
     return result.canceled ? null : result.filePaths[0];
   });
@@ -99,6 +114,14 @@ function registerIpc() {
     return result.canceled ? null : result.filePath;
   });
 
+  ipcMain.handle('benchmark:select-output-directory', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Chọn thư mục lưu Model Lab',
+      properties: ['openDirectory', 'createDirectory']
+    });
+    return result.canceled ? null : result.filePaths[0];
+  });
+
   ipcMain.handle('file:url', async (_event, filePath) => pathToFileURL(filePath).href);
   ipcMain.handle('image:metadata', async (_event, filePath) => inspectImage(filePath));
 
@@ -113,6 +136,17 @@ function registerIpc() {
     });
     emitProgress(100, 'Hoàn tất');
     return { outputPath };
+  });
+
+  ipcMain.handle('benchmark:presets', () => benchmarkService.listPresets());
+
+  ipcMain.handle('benchmark:run', async (_event, payload = {}) => {
+    emitProgress(1, 'Khởi tạo Model Lab');
+    return benchmarkService.runBenchmark({
+      ...payload,
+      settingsService,
+      onProgress: (percent, message) => emitProgress(percent, message)
+    });
   });
 
   ipcMain.handle('engine:status', () => engineService.getStatus(settingsService));
