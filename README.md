@@ -1,84 +1,99 @@
-# Print Upscale Studio V2.2 Experimental
+# Print Upscale Studio V2.3 Semantic Guard
 
 Ứng dụng desktop hybrid dành cho workflow hình ảnh, bao bì và in ấn:
 
 - **Local Enhance**: tăng kích thước bằng bộ xử lý AI cục bộ, không gửi ảnh ra ngoài và không tốn phí API.
-- **AI Enhance**: gửi ảnh tới Gemini hoặc OpenAI để tái tạo chi tiết theo ba mức Safe, Balanced và Creative.
+- **AI Enhance**: gửi ảnh tới Gemini hoặc OpenAI để tái tạo chi tiết.
 - **Restore Safe**: khử nhiễu, phục hồi tương phản/màu và làm nét có kiểm soát.
 - **Text & Artwork**: tăng độ nét chữ raster mà không OCR, không thay font và không sửa nội dung.
 - **Vector Logo**: chuyển logo màu, logo một màu, con dấu hoặc line art sang SVG bằng VTracer.
 - **Model Lab**: chạy cùng một ảnh qua bốn pipeline local, nhập Photoshop Reference và so sánh A/B bằng zoom/pan đồng bộ.
-- **Packaging Safe Pro V0.1**: tạo protection mask để giảm Detail tại chữ, logo, đường biên và hình học mạnh.
+- **Packaging Safe Pro V0.2**: semantic text/logo protection kết hợp QR & Barcode Guard.
 - **Print Inspector**: hiển thị kích thước pixel, dung lượng, hệ màu và kích thước in tham khảo ở 300 DPI.
 
 Đây là code clean-room mới hoàn toàn. Dự án không chứa code, license key hoặc tài sản của FD Advertising.
 
-## Trạng thái bản 2.2.0
+## Trạng thái bản 2.3.0
 
 - Windows 10/11 x64.
 - macOS 12 trở lên, build riêng Intel x64 và Apple Silicon arm64.
-- Nhúng sẵn runtime Local AI và bảy model Upscayl hiện có.
-- Model Lab bổ sung trọng số NCNN `realesrgan-x4plus` từ Real-ESRGAN và chạy bằng Local AI Engine native của từng nền tảng.
-- API key do người dùng tự nhập và được mã hóa bằng Electron `safeStorage` của hệ điều hành.
-- AI Cloud cần Internet và phát sinh phí trực tiếp trên tài khoản API của người dùng.
+- Nhúng runtime Local AI và bảy model Upscayl hiện có.
+- Model Lab bổ sung trọng số NCNN `realesrgan-x4plus` từ Real-ESRGAN.
+- QR/barcode được kiểm tra local bằng ZXing; không dùng dịch vụ scan bên ngoài.
+- API key AI Cloud được mã hóa bằng Electron `safeStorage`.
 
 ## Bốn pipeline giữ lại
 
 - **Current · High Fidelity**: giữ cấu trúc ảnh và dùng làm nền fidelity.
 - **Current · Packaging**: Remacri hiện tại, phù hợp artwork và bao bì.
 - **RealESRGAN · Detail**: ưu tiên texture và độ nét cảm nhận.
-- **Packaging Hybrid**: High Fidelity + RealESRGAN Detail + protection mask tùy chọn.
+- **Packaging Hybrid**: High Fidelity + RealESRGAN Detail + Semantic Guard.
 
-## Packaging Safe Pro V0.1
+## Packaging Safe Pro V0.2
 
-Khi bật **Tự động bảo vệ chữ, logo và cạnh hình học**, app:
+Khi bật protection, app tạo ba lớp mask:
 
-1. Resize ảnh nguồn đúng kích thước đầu ra.
-2. Tạo high-frequency edge mask từ ảnh gốc.
-3. Mở rộng và làm mềm vùng biên để bảo vệ chữ, logo và hình học mạnh.
-4. Cho phép RealESRGAN Detail tác động nhiều hơn ở vùng tối của mask.
-5. Giữ High Fidelity ở vùng sáng của mask.
-6. Xuất thêm file `protection-mask.png` để kiểm tra trực tiếp.
+1. **Structural Mask**: cạnh mạnh và hình học.
+2. **Text/Logo Semantic Mask**: vùng có mật độ nét, hướng stroke và độ phẳng cục bộ giống chữ/logo.
+3. **QR/Barcode Guard Mask**: vùng mã được ZXing phát hiện và khóa bảo vệ.
 
-Trong mask:
+Ba lớp được gộp thành **Combined Protection Mask**:
 
 - vùng sáng: ưu tiên High Fidelity;
 - vùng tối: cho phép nhận thêm RealESRGAN Detail.
 
-Điều chỉnh:
+Semantic Mask là phân tích heuristic local, không phải OCR và không gõ lại nội dung. Nó giảm tình trạng texture tự nhiên bị bảo vệ nhầm so với mask chỉ dựa trên cạnh, nhưng vẫn cần kiểm tra trực quan.
 
-- **Detail trong Hybrid**: 5–45%, mặc định 20%; bao bì nên thử 15–25%.
-- **Độ nhạy protection mask**: 20–95, mặc định 65.
-- Tăng độ nhạy khi chữ/cạnh chưa được bảo vệ đủ.
-- Giảm độ nhạy khi mask phủ quá nhiều texture tự nhiên.
+## QR & Barcode Guard
 
-Đây là mask hình học dựa trên cạnh, chưa phải OCR hoặc semantic segmentation. Barcode, QR, chữ nhỏ, màu spot và artwork cuối cùng vẫn phải kiểm tra trong Photoshop/Illustrator.
+App hỗ trợ kiểm tra các định dạng phổ biến như QR Code, Data Matrix, Code 128, EAN, UPC, ITF và Codabar.
 
-## Quy trình test
+Quy trình:
 
-1. Chọn ảnh nguồn.
-2. Chuyển sang **Model Lab · Experimental**.
-3. Chọn tỷ lệ 2×, 3× hoặc 4×.
-4. Có thể nhập file Photoshop Reference.
-5. Giữ bốn pipeline hoặc bỏ chọn pipeline không cần chạy.
-6. Bật protection mask, thử độ nhạy 55, 65 và 75.
-7. Chạy Model Lab.
+1. Đọc mã trên ảnh nguồn.
+2. Đưa toàn vùng mã vào protection mask.
+3. Kiểm tra lại mã trên Packaging Hybrid sau xử lý.
+4. Nếu mã không còn đọc được hoặc sai nội dung, app tự phục hồi vùng đó từ ảnh nguồn bằng nội suy nearest-neighbour.
+5. Kiểm tra lại lần cuối và ghi trạng thái vào `benchmark-report.json`.
+
+Trạng thái có thể là:
+
+- `pass`: mã vẫn đọc đúng;
+- `pass + restored`: app đã tự phục hồi và đọc lại thành công;
+- `unreadable`: mã nguồn đọc được nhưng kết quả cuối không đọc được;
+- `mismatch`: mã kết quả khác mã nguồn;
+- `not-detected`: app không phát hiện được mã trên ảnh nguồn.
+
+Code Guard hiện kiểm tra mã đầu tiên đọc được trong ảnh. Artwork cuối cùng vẫn cần kiểm tra trong Photoshop/Illustrator và bằng phần mềm preflight chuyên dụng.
+
+## File xuất từ Model Lab
+
+Model Lab luôn xuất PNG lossless và tạo:
+
+- bốn kết quả pipeline đã chọn;
+- `*_protection-mask.png`;
+- `*_text-logo-mask.png`;
+- `*_barcode-mask.png` khi phát hiện mã;
+- `benchmark-report.json`.
+
+Report ghi model, thời gian, kích thước, Detail Strength, độ nhạy mask, coverage từng lớp và trạng thái Code Guard. Giá trị mã được đối chiếu bằng SHA-256; report chỉ lưu thêm preview ngắn để kiểm tra thủ công.
+
+## Quy trình test đề xuất
+
+1. Chọn ảnh nguồn bao bì hoặc packshot.
+2. Vào **Model Lab**.
+3. Chọn 2× hoặc 3×.
+4. Giữ cả bốn pipeline.
+5. Bật:
+   - `Text/Logo Semantic Protection`;
+   - `QR & Barcode Guard`.
+6. Đặt Detail 20%, sensitivity 65.
+7. Chạy và kiểm tra:
+   - Combined Mask;
+   - Text/Logo Semantic Mask;
+   - QR/Barcode Guard Mask;
+   - trạng thái mã trong danh sách kết quả.
 8. So sánh A/B ở 100%, 200% và 400%.
-9. Chọn `Packaging Hybrid · Protection Mask` để xem vùng được bảo vệ.
-
-Model Lab luôn xuất PNG lossless và tạo `benchmark-report.json`. Report ghi model, thời gian, kích thước, Detail Strength, độ nhạy mask và tỷ lệ diện tích được bảo vệ.
-
-## Cấu hình AI Cloud
-
-Trong ứng dụng, mở **Cài đặt → AI Provider & API key**:
-
-1. Chọn Gemini hoặc OpenAI làm provider mặc định.
-2. Nhập API key tương ứng.
-3. Bấm **Lưu cài đặt**.
-4. Bấm **Kiểm tra** để xác nhận key và kết nối.
-5. Mở **AI Enhance**, chọn provider, model và mức tái tạo.
-
-AI tạo sinh không bảo đảm giữ chính xác tuyệt đối chữ, logo, barcode, màu in hoặc khuôn mặt. Luôn kiểm tra Before/After trước khi dùng cho artwork chính thức.
 
 ## Chạy ở chế độ phát triển
 
@@ -89,13 +104,13 @@ npm install
 npm start
 ```
 
-Kiểm tra cú pháp và chạy smoke test:
+Kiểm tra cú pháp và smoke test:
 
 ```bash
 npm run check
 ```
 
-Smoke test kiểm tra cả protection mask và protected blend, nhưng không gọi Gemini/OpenAI hoặc chạy model NCNN lớn.
+Smoke test kiểm tra semantic mask, protected blend và QR decode nhưng không gọi Gemini/OpenAI hoặc chạy model NCNN lớn.
 
 ## Local AI Engine
 
@@ -112,8 +127,6 @@ Model Upscayl hiện có:
 Model Real-ESRGAN trong Model Lab:
 
 - `realesrgan-x4plus`
-
-Build script tải runtime/model từ release chính thức, chép license và ghi `SOURCE_AND_CREDITS.md` vào thư mục runtime của installer.
 
 ## Build file cài đặt
 
@@ -140,9 +153,9 @@ npm run dist:mac:x64
 
 Workflow GitHub Actions upload các artifact:
 
-- `print-upscale-studio-v2.2-windows-x64`
-- `print-upscale-studio-v2.2-macos-arm64`
-- `print-upscale-studio-v2.2-macos-x64`
+- `print-upscale-studio-v2.3-windows-x64`
+- `print-upscale-studio-v2.3-macos-arm64`
+- `print-upscale-studio-v2.3-macos-x64`
 
 ## Chưa ký số
 
