@@ -6,6 +6,8 @@ const {
   publicDetection
 } = require('./barcodeGuardService');
 
+const MASK_REFINEMENT_VERSION = '3.1';
+
 function clamp(value, minimum, maximum, fallback) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
@@ -21,7 +23,15 @@ function normalizeStrength(value) {
 }
 
 function thresholdForSensitivity(sensitivity) {
-  return Math.round(172 - normalizeSensitivity(sensitivity) * 1.25);
+  return Math.round(58 - normalizeSensitivity(sensitivity) * 0.35);
+}
+
+function analysisDimensions(width, height, maxDimension) {
+  const scale = Math.min(1, maxDimension / Math.max(width, height));
+  return {
+    width: Math.max(48, Math.round(width * scale)),
+    height: Math.max(48, Math.round(height * scale))
+  };
 }
 
 async function maskCoverage(mask) {
@@ -29,59 +39,172 @@ async function maskCoverage(mask) {
   return Number((((stats.channels[0]?.mean || 0) / 255) * 100).toFixed(1));
 }
 
-async function createStructuralMask({ inputPath, width, height, sensitivity }) {
-  const threshold = thresholdForSensitivity(sensitivity);
-  const sourceGray = await sharp(inputPath, { failOn: 'none' })
+async function readGray(inputPath, width, height, maxDimension) {
+  const analysis = analysisDimensions(width, height, maxDimension);
+  return sharp(inputPath, { failOn: 'none' })
     .rotate()
-    .resize(width, height, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
+    .resize(analysis.width, analysis.height, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
     .greyscale()
-    .normalise({ lower: 1, upper: 99 })
-    .png()
-    .toBuffer();
-  const blurred = await sharp(sourceGray)
-    .blur(1.25)
-    .png()
-    .toBuffer();
-  const hardEdges = await sharp(sourceGray)
-    .composite([{ input: blurred, blend: 'difference' }])
-    .normalise({ lower: 2, upper: 99.5 })
-    .threshold(threshold)
-    .png()
-    .toBuffer();
-  const buffer = await sharp(hardEdges)
-    .blur(1.35)
-    .linear(1.45)
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+}
+
+function sobelMagnitude(data, width, height) {
+  const output = Buffer.alloc(width * height, 0);
+
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      const index = y * width + x;
+      const topLeft = data[index - width - 1];
+      const top = data[index - width];
+      const topRight = data[index - width + 1];
+      const left = data[index - 1];
+      const right = data[index + 1];
+      const bottomLeft = data[index + width - 1];
+      const bottom = data[index + width];
+      const bottomRight = data[index + width + 1];
+      const gx = -topLeft - 2 * left - bottomLeft + topRight + 2 * right + bottomRight;
+      const gy = -topLeft - 2 * top - topRight + bottomLeft + 2 * bottom + bottomRight;
+      output[index] = Math.min(255, Math.round((Math.abs(gx) + Math.abs(gy)) / 4));
+    }
+  }
+
+  return output;
+}
+
+function extremaFilter(source, width, height, radius, mode) {
+  if (radius <= 0) return Buffer.from(source);
+  const horizontal = Buffer.alloc(source.length, mode === 'max' ? 0 : 255);
+  const output = Buffer.alloc(source.length, mode === 'max' ? 0 : 255);
+
+  for (let y = 0; y < height; y += 1) {
+    const row = y * width;
+    for (let x = 0; x < width; x += 1) {
+      let value = mode === 'max' ? 0 : 255;
+      const start = Math.max(0, x - radius);
+      const end = Math.min(width - 1, x + radius);
+      for (let sampleX = start; sampleX <= end; sampleX += 1) {
+        const candidate = source[row + sampleX];
+        value = mode === 'max' ? Math.max(value, candidate) : Math.min(value, candidate);
+      }
+      horizontal[row + x] = value;
+    }
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      let value = mode === 'max' ? 0 : 255;
+      const start = Math.max(0, y - radius);
+      const end = Math.min(height - 1, y + radius);
+      for (let sampleY = start; sampleY <= end; sampleY += 1) {
+        const candidate = horizontal[sampleY * width + x];
+        value = mode === 'max' ? Math.max(value, candidate) : Math.min(value, candidate);
+      }
+      output[y * width + x] = value;
+    }
+  }
+
+  return output;
+}
+
+function dilateBinary(source, width, height, radius = 1) {
+  return extremaFilter(source, width, height, radius, 'max');
+}
+
+function erodeBinary(source, width, height, radius = 1) {
+  return extremaFilter(source, width, height, radius, 'min');
+}
+
+function closeBinary(source, width, height, radius = 1) {
+  return erodeBinary(dilateBinary(source, width, height, radius), width, height, radius);
+}
+
+function suppressSinglePixels(source, width, height) {
+  const output = Buffer.from(source);
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      const index = y * width + x;
+      if (!source[index]) continue;
+      let neighbors = 0;
+      for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+        for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+          if (offsetX === 0 && offsetY === 0) continue;
+          if (source[index + offsetY * width + offsetX]) neighbors += 1;
+        }
+      }
+      if (neighbors === 0) output[index] = 0;
+    }
+  }
+  return output;
+}
+
+async function renderSoftMask({ binary, analysisWidth, analysisHeight, width, height, featherSigma }) {
+  return sharp(binary, { raw: { width: analysisWidth, height: analysisHeight, channels: 1 } })
+    .resize(width, height, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
+    .blur(Math.max(0.3, featherSigma))
+    .linear(1.08)
     .png({ compressionLevel: 7 })
     .toBuffer();
+}
 
-  return { buffer, threshold, coveragePercent: await maskCoverage(buffer) };
+async function createStructuralMask({ inputPath, width, height, sensitivity }) {
+  const safeSensitivity = normalizeSensitivity(sensitivity);
+  const threshold = thresholdForSensitivity(safeSensitivity);
+  const { data, info } = await readGray(inputPath, width, height, 1800);
+  const gradient = sobelMagnitude(data, info.width, info.height);
+  const binary = Buffer.alloc(gradient.length, 0);
+
+  for (let index = 0; index < gradient.length; index += 1) {
+    if (gradient[index] >= threshold) binary[index] = 255;
+  }
+
+  const closed = closeBinary(binary, info.width, info.height, 1);
+  const expanded = dilateBinary(closed, info.width, info.height, 1);
+  const cleaned = suppressSinglePixels(expanded, info.width, info.height);
+  const featherSigma = Math.max(0.65, Math.min(1.8, Math.max(width, height) / 3600));
+  const buffer = await renderSoftMask({
+    binary: cleaned,
+    analysisWidth: info.width,
+    analysisHeight: info.height,
+    width,
+    height,
+    featherSigma
+  });
+
+  return {
+    buffer,
+    threshold,
+    coveragePercent: await maskCoverage(buffer),
+    analysisWidth: info.width,
+    analysisHeight: info.height,
+    closeRadius: 1,
+    dilationRadius: 1,
+    featherSigma,
+    refinementVersion: MASK_REFINEMENT_VERSION
+  };
 }
 
 async function createSemanticTextLogoMask({ inputPath, width, height, sensitivity = 65, outputPath = null }) {
   const safeSensitivity = normalizeSensitivity(sensitivity);
-  const analysisScale = Math.min(1, 1100 / Math.max(width, height));
-  const analysisWidth = Math.max(48, Math.round(width * analysisScale));
-  const analysisHeight = Math.max(48, Math.round(height * analysisScale));
-  const { data, info } = await sharp(inputPath, { failOn: 'none' })
-    .rotate()
-    .resize(analysisWidth, analysisHeight, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
-    .greyscale()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
-  const tileWidth = 12;
-  const tileHeight = 8;
-  const columns = Math.ceil(info.width / tileWidth);
-  const rows = Math.ceil(info.height / tileHeight);
-  const tiles = Buffer.alloc(columns * rows, 0);
+  const { data, info } = await readGray(inputPath, width, height, 1600);
+  const gradient = sobelMagnitude(data, info.width, info.height);
+  const strideX = 4;
+  const strideY = 3;
+  const windowWidth = 12;
+  const windowHeight = 8;
+  const columns = Math.ceil(info.width / strideX);
+  const rows = Math.ceil(info.height / strideY);
+  const confidenceGrid = Buffer.alloc(columns * rows, 0);
   const edgeThreshold = Math.round(68 - safeSensitivity * 0.45);
 
-  for (let tileY = 0; tileY < rows; tileY += 1) {
-    for (let tileX = 0; tileX < columns; tileX += 1) {
-      const startX = tileX * tileWidth;
-      const startY = tileY * tileHeight;
-      const endX = Math.min(info.width - 1, startX + tileWidth);
-      const endY = Math.min(info.height - 1, startY + tileHeight);
+  for (let gridY = 0; gridY < rows; gridY += 1) {
+    for (let gridX = 0; gridX < columns; gridX += 1) {
+      const centerX = Math.min(info.width - 2, gridX * strideX + Math.floor(strideX / 2));
+      const centerY = Math.min(info.height - 2, gridY * strideY + Math.floor(strideY / 2));
+      const startX = Math.max(1, centerX - Math.floor(windowWidth / 2));
+      const startY = Math.max(1, centerY - Math.floor(windowHeight / 2));
+      const endX = Math.min(info.width - 1, centerX + Math.ceil(windowWidth / 2));
+      const endY = Math.min(info.height - 1, centerY + Math.ceil(windowHeight / 2));
       let samples = 0;
       let edgeCount = 0;
       let verticalEnergy = 0;
@@ -89,8 +212,8 @@ async function createSemanticTextLogoMask({ inputPath, width, height, sensitivit
       let sum = 0;
       let sumSquares = 0;
 
-      for (let y = Math.max(1, startY); y < endY; y += 1) {
-        for (let x = Math.max(1, startX); x < endX; x += 1) {
+      for (let y = startY; y < endY; y += 1) {
+        for (let x = startX; x < endX; x += 1) {
           const index = y * info.width + x;
           const value = data[index];
           const gx = Math.abs(data[index + 1] - data[index - 1]);
@@ -109,28 +232,46 @@ async function createSemanticTextLogoMask({ inputPath, width, height, sensitivit
       const mean = sum / samples;
       const variance = Math.max(0, sumSquares / samples - mean * mean);
       const directionBalance = (verticalEnergy + 1) / (horizontalEnergy + 1);
-      const textLike = density >= 0.11
-        && density <= 0.68
-        && variance >= 110
-        && variance <= 5200
-        && directionBalance >= 0.16
-        && directionBalance <= 6.2;
-      const flatGraphicLike = density >= 0.06
-        && density <= 0.38
-        && variance >= 55
-        && variance <= 2200;
+      const textLike = density >= 0.1
+        && density <= 0.7
+        && variance >= 90
+        && variance <= 6000
+        && directionBalance >= 0.14
+        && directionBalance <= 7;
+      const flatGraphicLike = density >= 0.05
+        && density <= 0.42
+        && variance >= 45
+        && variance <= 2600;
 
-      if (textLike) tiles[tileY * columns + tileX] = 255;
-      else if (flatGraphicLike) tiles[tileY * columns + tileX] = 175;
+      if (textLike) confidenceGrid[gridY * columns + gridX] = 255;
+      else if (flatGraphicLike) confidenceGrid[gridY * columns + gridX] = 150;
     }
   }
 
-  const buffer = await sharp(tiles, { raw: { width: columns, height: rows, channels: 1 } })
-    .resize(width, height, { fit: 'fill', kernel: sharp.kernel.nearest })
-    .blur(Math.max(1.1, Math.min(3.5, Math.max(width, height) / 1100)))
-    .linear(1.2)
-    .png({ compressionLevel: 7 })
+  const confidence = await sharp(confidenceGrid, { raw: { width: columns, height: rows, channels: 1 } })
+    .resize(info.width, info.height, { fit: 'fill', kernel: sharp.kernel.cubic })
+    .blur(0.7)
+    .raw()
     .toBuffer();
+  const binary = Buffer.alloc(gradient.length, 0);
+
+  for (let index = 0; index < gradient.length; index += 1) {
+    if (gradient[index] >= edgeThreshold && confidence[index] >= 72) binary[index] = 255;
+  }
+
+  const closeRadius = Math.max(1, Math.min(2, Math.round(Math.max(info.width, info.height) / 900)));
+  const closed = closeBinary(binary, info.width, info.height, closeRadius);
+  const expanded = dilateBinary(closed, info.width, info.height, 1);
+  const cleaned = suppressSinglePixels(expanded, info.width, info.height);
+  const featherSigma = Math.max(0.75, Math.min(2.2, Math.max(width, height) / 3200));
+  const buffer = await renderSoftMask({
+    binary: cleaned,
+    analysisWidth: info.width,
+    analysisHeight: info.height,
+    width,
+    height,
+    featherSigma
+  });
   if (outputPath) await sharp(buffer).png({ compressionLevel: 7 }).toFile(outputPath);
 
   return {
@@ -138,7 +279,15 @@ async function createSemanticTextLogoMask({ inputPath, width, height, sensitivit
     coveragePercent: await maskCoverage(buffer),
     analysisWidth: info.width,
     analysisHeight: info.height,
-    edgeThreshold
+    edgeThreshold,
+    strideX,
+    strideY,
+    windowWidth,
+    windowHeight,
+    closeRadius,
+    dilationRadius: 1,
+    featherSigma,
+    refinementVersion: MASK_REFINEMENT_VERSION
   };
 }
 
@@ -194,12 +343,25 @@ async function createProtectionMask({
     sensitivity: safeSensitivity,
     threshold: structural.threshold,
     structuralCoveragePercent: structural.coveragePercent,
+    refinementVersion: MASK_REFINEMENT_VERSION,
+    structural: {
+      analysisWidth: structural.analysisWidth,
+      analysisHeight: structural.analysisHeight,
+      closeRadius: structural.closeRadius,
+      dilationRadius: structural.dilationRadius,
+      featherSigma: structural.featherSigma
+    },
     semantic: semantic ? {
       enabled: true,
       coveragePercent: semantic.coveragePercent,
       maskPath: semanticOutputPath,
       analysisWidth: semantic.analysisWidth,
-      analysisHeight: semantic.analysisHeight
+      analysisHeight: semantic.analysisHeight,
+      edgeThreshold: semantic.edgeThreshold,
+      closeRadius: semantic.closeRadius,
+      dilationRadius: semantic.dilationRadius,
+      featherSigma: semantic.featherSigma,
+      refinementVersion: semantic.refinementVersion
     } : { enabled: false, coveragePercent: 0, maskPath: null },
     barcodeDetection,
     barcodeMaskPath: barcodeMask?.outputPath || null
@@ -292,6 +454,8 @@ async function protectedBlend({
       threshold: mask.threshold,
       coveragePercent: mask.coveragePercent,
       structuralCoveragePercent: mask.structuralCoveragePercent,
+      refinementVersion: mask.refinementVersion,
+      structural: mask.structural,
       maskPath: maskOutputPath,
       semantic: mask.semantic,
       barcode: {
@@ -305,6 +469,7 @@ async function protectedBlend({
 }
 
 module.exports = {
+  MASK_REFINEMENT_VERSION,
   createProtectionMask,
   createSemanticTextLogoMask,
   flatBlend,
