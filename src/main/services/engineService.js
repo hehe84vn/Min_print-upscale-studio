@@ -34,6 +34,14 @@ function runtimeBinary(root) {
   return path.join(root, 'bin', process.platform === 'win32' ? 'upscayl-bin.exe' : 'upscayl-bin');
 }
 
+function realEsrganRuntimeBinary(root) {
+  return path.join(
+    root,
+    'real-esrgan-bin',
+    process.platform === 'win32' ? 'realesrgan-ncnn-vulkan.exe' : 'realesrgan-ncnn-vulkan'
+  );
+}
+
 function bundledRuntimeCandidates() {
   const roots = [];
   if (process.resourcesPath) roots.push(path.join(process.resourcesPath, 'upscayl-runtime'));
@@ -46,10 +54,12 @@ function findBundledRuntime() {
     const engineBinary = runtimeBinary(root);
     const modelsDirectory = path.join(root, 'models');
     if (exists(engineBinary) && exists(modelsDirectory)) {
+      const realEsrganBinary = realEsrganRuntimeBinary(root);
       return {
         source: 'bundled',
         runtimeRoot: root,
         engineBinary,
+        realEsrganBinary: exists(realEsrganBinary) ? realEsrganBinary : null,
         modelsDirectory,
         manifestPath: path.join(root, 'runtime-manifest.json')
       };
@@ -104,22 +114,41 @@ async function resolveEngine(settingsService) {
   const engineBinary = settings.engineBinary || null;
   const modelsDirectory = settings.modelsDirectory || inferModelsDirectory(engineBinary);
   if (exists(engineBinary) && exists(modelsDirectory)) {
-    return { source: 'external', engineBinary, modelsDirectory, manifestPath: null };
+    return {
+      source: 'external',
+      engineBinary,
+      realEsrganBinary: null,
+      modelsDirectory,
+      manifestPath: null
+    };
   }
-  return { source: 'missing', engineBinary: null, modelsDirectory: null, manifestPath: null };
+  return {
+    source: 'missing',
+    engineBinary: null,
+    realEsrganBinary: null,
+    modelsDirectory: null,
+    manifestPath: null
+  };
 }
 
 async function getStatus(settingsService) {
   const resolved = await resolveEngine(settingsService);
-  const availableModels = resolved.modelsDirectory
-    ? MODELS.filter((model) => exists(path.join(resolved.modelsDirectory, `${model}.param`)) && exists(path.join(resolved.modelsDirectory, `${model}.bin`)))
-    : [];
+  const hasModelFiles = (model) => resolved.modelsDirectory
+    && exists(path.join(resolved.modelsDirectory, `${model}.param`))
+    && exists(path.join(resolved.modelsDirectory, `${model}.bin`));
+
+  const availableModels = [
+    ...CORE_MODELS.filter(hasModelFiles),
+    ...(exists(resolved.realEsrganBinary) ? EXPERIMENTAL_MODELS.filter(hasModelFiles) : [])
+  ];
   const manifest = await readManifest(resolved.manifestPath);
 
   return {
     configured: exists(resolved.engineBinary) && exists(resolved.modelsDirectory),
     source: resolved.source,
     engineBinary: resolved.engineBinary,
+    realEsrganBinary: resolved.realEsrganBinary,
+    experimentalRuntimeAvailable: exists(resolved.realEsrganBinary),
     modelsDirectory: resolved.modelsDirectory,
     availableModels,
     coreModels: CORE_MODELS,
@@ -145,7 +174,7 @@ async function autoDetect(settingsService) {
   return getStatus(settingsService);
 }
 
-function spawnEngine(binary, args, onProgress) {
+function spawnEngine(binary, args, onProgress, label = 'local AI engine') {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, args, { windowsHide: true });
     let stderr = '';
@@ -161,38 +190,60 @@ function spawnEngine(binary, args, onProgress) {
     child.on('error', reject);
     child.on('close', (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`upscayl-bin exited with code ${code}. ${stderr.slice(-1200)}`));
+      else reject(new Error(`${label} exited with code ${code}. ${stderr.slice(-1200)}`));
     });
   });
 }
 
 async function runNcnnUpscale({ settingsService, inputPath, outputPath, model, scale, onProgress }) {
   const status = await getStatus(settingsService);
-  if (!status.configured) throw new Error('Runtime Upscayl tích hợp không có trong bộ cài này.');
-  if (!status.availableModels.includes(model)) throw new Error(`Không tìm thấy model ${model} trong runtime tích hợp.`);
+  if (!status.configured) throw new Error('Runtime Local AI tích hợp không có trong bộ cài này.');
+  if (!status.availableModels.includes(model)) throw new Error(`Không tìm thấy model ${model} hoặc runtime tương ứng.`);
+
+  const isExperimental = EXPERIMENTAL_MODELS.includes(model);
+  const selectedBinary = isExperimental ? status.realEsrganBinary : status.engineBinary;
+  if (!selectedBinary) throw new Error(`Runtime cho model ${model} chưa được cài.`);
 
   if (process.platform !== 'win32') {
-    try { await fsp.chmod(status.engineBinary, 0o755); } catch { /* best effort */ }
+    try { await fsp.chmod(selectedBinary, 0o755); } catch { /* best effort */ }
   }
 
-  const metadata = await sharp(inputPath).metadata();
+  const metadata = await sharp(inputPath, { failOn: 'none' }).metadata();
   if (!metadata.width || !metadata.height) throw new Error('Cannot read source image dimensions.');
 
-  const tempOutput = path.join(os.tmpdir(), `print-upscale-${Date.now()}-${Math.random().toString(16).slice(2)}.png`);
-  const args = ['-i', inputPath, '-o', tempOutput, '-n', model, '-m', status.modelsDirectory, '-s', '4', '-f', 'png'];
+  const token = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const tempOutput = path.join(os.tmpdir(), `print-upscale-${token}.png`);
+  const sourceExtension = path.extname(inputPath).toLowerCase();
+  const officialInputSupported = ['.png', '.jpg', '.jpeg', '.webp'].includes(sourceExtension);
+  const tempInput = isExperimental && !officialInputSupported
+    ? path.join(os.tmpdir(), `print-upscale-input-${token}.png`)
+    : null;
+  const engineInput = tempInput || inputPath;
+  const args = ['-i', engineInput, '-o', tempOutput, '-n', model, '-m', status.modelsDirectory, '-s', '4', '-f', 'png'];
 
   try {
-    onProgress?.(5, `Local AI Engine ${status.runtimeVersion || ''} · ${model}`.trim());
-    await spawnEngine(status.engineBinary, args, onProgress);
+    if (tempInput) {
+      onProgress?.(2, 'Chuẩn hóa ảnh cho Real-ESRGAN');
+      await sharp(inputPath, { failOn: 'none' }).rotate().png({ compressionLevel: 4 }).toFile(tempInput);
+    }
+
+    const engineLabel = isExperimental ? 'Real-ESRGAN NCNN' : 'Local AI Engine';
+    onProgress?.(5, `${engineLabel} · ${model}`);
+    await spawnEngine(selectedBinary, args, onProgress, engineLabel);
     onProgress?.(96, 'Chuẩn hóa kích thước đầu ra');
 
     const targetWidth = Math.max(1, Math.round(metadata.width * scale));
     const targetHeight = Math.max(1, Math.round(metadata.height * scale));
-    await sharp(tempOutput).resize(targetWidth, targetHeight, { kernel: sharp.kernel.lanczos3 }).toFile(outputPath);
+    await sharp(tempOutput, { failOn: 'none' })
+      .resize(targetWidth, targetHeight, { kernel: sharp.kernel.lanczos3 })
+      .toFile(outputPath);
     onProgress?.(100);
     return outputPath;
   } finally {
-    await fsp.rm(tempOutput, { force: true });
+    await Promise.all([
+      fsp.rm(tempOutput, { force: true }),
+      tempInput ? fsp.rm(tempInput, { force: true }) : Promise.resolve()
+    ]);
   }
 }
 
