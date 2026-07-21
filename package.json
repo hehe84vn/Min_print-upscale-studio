@@ -1,7 +1,7 @@
 {
   "name": "print-upscale-studio",
-  "version": "0.2.0",
-  "description": "All-in-one local desktop toolkit with bundled Upscayl NCNN/Vulkan runtime, restoration, logo vectorization and print-text enhancement.",
+  "version": "0.2.1",
+  "description": "All-in-one local desktop toolkit with bundled Upscayl NCNN/Vulkan runtime, restoration, logo vectorization, print-text enhancement and secure cloud AI provider settings.",
   "main": "src/main/main.js",
   "author": "Min",
   "license": "MIT",
