@@ -38,12 +38,16 @@ try {
   console.log('AI prompt builder OK');
 
   const benchmarkPresets = listPresets();
-  const expectedPresetIds = ['current-packaging', 'official-fidelity', 'official-detail', 'packaging-hybrid'];
+  const expectedPresetIds = ['current-photo', 'current-packaging', 'official-detail', 'packaging-hybrid'];
   if (!expectedPresetIds.every((id) => benchmarkPresets.some((preset) => preset.id === id))) {
     throw new Error('Model Lab preset registry is incomplete.');
   }
-  if (!['realesrnet-x4plus', 'realesrgan-x4plus'].every((model) => EXPERIMENTAL_MODELS.includes(model))) {
-    throw new Error('Experimental Real-ESRGAN models are not registered.');
+  if (!EXPERIMENTAL_MODELS.includes('realesrgan-x4plus') || EXPERIMENTAL_MODELS.includes('realesrnet-x4plus')) {
+    throw new Error('Experimental Real-ESRGAN model registry is incorrect.');
+  }
+  const hybrid = benchmarkPresets.find((preset) => preset.id === 'packaging-hybrid');
+  if (hybrid?.baseModel !== 'high-fidelity-4x' || hybrid?.detailModel !== 'realesrgan-x4plus') {
+    throw new Error('Packaging Hybrid model composition is incorrect.');
   }
   console.log(`Model Lab registry OK: ${benchmarkPresets.length} presets`);
 
