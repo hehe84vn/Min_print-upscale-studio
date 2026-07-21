@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data:; img-src 'self' file: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self';" />
-  <title>Print Upscale Studio V2.1 Experimental</title>
+  <title>Print Upscale Studio V2.2 Experimental</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -12,7 +12,7 @@
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark">PU</div>
-        <div><strong>Print Upscale</strong><span>Studio V2.1 · Experimental</span></div>
+        <div><strong>Print Upscale</strong><span>Studio V2.2 · Experimental</span></div>
       </div>
 
       <nav id="toolNav" class="tool-nav">
@@ -218,7 +218,7 @@
           </div>
 
           <div id="benchmarkSettings" class="tool-settings" hidden>
-            <div class="lab-notice"><b>Experimental · local only</b><span>Chạy cùng một ảnh qua các model để kiểm tra chữ, logo, hình học và texture. Kết quả luôn lưu PNG lossless.</span></div>
+            <div class="lab-notice"><b>Packaging Safe Pro V0.1 · local</b><span>Chạy bốn pipeline và tạo mask tự động để giảm Detail tại chữ, logo, đường biên và hình học mạnh.</span></div>
 
             <div class="setting-group">
               <label>Photoshop Reference <small>không bắt buộc</small></label>
@@ -234,7 +234,7 @@
                 <label class="benchmark-option"><input class="benchmark-preset" type="checkbox" value="current-photo" data-models="high-fidelity-4x" checked /><span><b>Current · High Fidelity</b><small>Nền fidelity giữ cấu trúc</small></span></label>
                 <label class="benchmark-option"><input class="benchmark-preset" type="checkbox" value="current-packaging" data-models="remacri-4x" checked /><span><b>Current · Packaging</b><small>Mốc Remacri hiện tại</small></span></label>
                 <label class="benchmark-option"><input class="benchmark-preset" type="checkbox" value="official-detail" data-models="realesrgan-x4plus" checked /><span><b>RealESRGAN · Detail</b><small>Tăng texture và độ nét cảm nhận</small></span></label>
-                <label class="benchmark-option"><input class="benchmark-preset" type="checkbox" value="packaging-hybrid" data-models="high-fidelity-4x,realesrgan-x4plus" checked /><span><b>Packaging Hybrid</b><small>High Fidelity + RealESRGAN Detail</small></span></label>
+                <label class="benchmark-option"><input class="benchmark-preset" type="checkbox" value="packaging-hybrid" data-models="high-fidelity-4x,realesrgan-x4plus" checked /><span><b>Packaging Hybrid</b><small>High Fidelity + Detail + protection mask</small></span></label>
               </div>
             </div>
 
@@ -242,6 +242,14 @@
               <label>Detail trong Hybrid <output id="blendStrengthValue">20%</output></label>
               <input id="blendStrength" type="range" min="5" max="45" value="20" step="5" />
               <small class="setting-hint">Bao bì nên thử 15–25%. Mức cao hơn dễ tạo halo hoặc làm thay đổi nét chữ.</small>
+            </div>
+
+            <label class="check-row benchmark-protection-toggle"><input id="protectionEnabled" type="checkbox" checked /><span>Tự động bảo vệ chữ, logo và cạnh hình học</span></label>
+
+            <div id="protectionSensitivitySetting" class="setting-group">
+              <label>Độ nhạy protection mask <output id="protectionSensitivityValue">65</output></label>
+              <input id="protectionSensitivity" type="range" min="20" max="95" value="65" step="5" />
+              <small class="setting-hint">Tăng khi chữ/cạnh chưa được bảo vệ đủ. Giảm khi mask phủ quá nhiều texture tự nhiên.</small>
             </div>
           </div>
 
