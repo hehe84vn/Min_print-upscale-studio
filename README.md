@@ -1,49 +1,84 @@
-# Print Upscale Studio
+# Print Upscale Studio V2
 
-Ứng dụng desktop local dành cho workflow thiết kế và in ấn:
+Ứng dụng desktop hybrid dành cho workflow hình ảnh và in ấn:
 
-- **AI Upscale**: gọi backend `upscayl-bin` NCNN/Vulkan do người dùng cung cấp.
+- **Local Enhance**: tăng kích thước bằng bộ xử lý AI cục bộ, không gửi ảnh ra ngoài và không tốn phí API.
+- **AI Enhance**: gửi ảnh tới Gemini hoặc OpenAI để tái tạo chi tiết theo ba mức Safe, Balanced và Creative.
 - **Restore Safe**: khử nhiễu, phục hồi tương phản/màu và làm nét có kiểm soát.
+- **Text & Artwork**: tăng độ nét chữ raster mà không OCR, không thay font và không sửa nội dung.
 - **Vector Logo**: chuyển logo màu, logo một màu, con dấu hoặc line art sang SVG bằng VTracer.
-- **Text Print Safe**: tăng độ nét chữ raster mà không OCR, không thay font và không sửa nội dung.
+- **Before/After**: so sánh ảnh nguồn và ảnh đầu ra bằng thanh kéo.
+- **Print Inspector**: hiển thị kích thước pixel, dung lượng, hệ màu và kích thước in tham khảo ở 300 DPI.
 
 Đây là code clean-room mới hoàn toàn. Dự án không chứa code, license key hoặc tài sản của FD Advertising.
 
-## Trạng thái bản 0.1.0
-
-Bản này là MVP dùng được:
+## Trạng thái bản 2.0.0
 
 - Windows 10/11 x64.
-- macOS 12 trở lên, tạo cả Intel x64 và Apple Silicon arm64.
-- Xử lý ảnh chạy local.
-- Nếu chưa cấu hình NCNN, module Upscale dùng Lanczos + sharpening dự phòng.
-- Vector Logo hỗ trợ màu phẳng và đơn sắc; vẫn cần kiểm tra node/màu trước khi đưa vào artwork in.
-- Restore Safe không phải generative restoration; không tự bịa chi tiết khuôn mặt hoặc vùng ảnh mất.
+- macOS 12 trở lên, build riêng Intel x64 và Apple Silicon arm64.
+- Nhúng sẵn runtime Local AI và bảy model.
+- Gemini dùng `gemini-3.1-flash-image` hoặc `gemini-3-pro-image`.
+- OpenAI dùng `gpt-image-2` qua Images Edit API.
+- API key do người dùng tự nhập và được mã hóa bằng Electron `safeStorage` của hệ điều hành.
+- API key không lưu trong `settings.json`, không gửi về renderer và không commit lên GitHub.
+- AI Cloud cần Internet và phát sinh phí trực tiếp trên tài khoản API của người dùng.
+
+## Cấu hình AI Cloud
+
+Trong ứng dụng, mở **Cài đặt → AI Provider & API key**:
+
+1. Chọn Gemini hoặc OpenAI làm provider mặc định.
+2. Nhập API key tương ứng.
+3. Bấm **Lưu cài đặt**.
+4. Bấm **Kiểm tra** để xác nhận key và kết nối.
+5. Mở **AI Enhance**, chọn provider, model và mức tái tạo.
+
+### Gemini
+
+- Nano Banana 2: `gemini-3.1-flash-image`.
+- Nano Banana Pro: `gemini-3-pro-image`.
+- V2 yêu cầu đầu ra 2K hoặc 4K bằng Gemini Interactions API.
+
+### OpenAI
+
+- Model: `gpt-image-2`.
+- Dùng chế độ image edit với input fidelity cao.
+- Kích thước đầu ra để API tự lựa chọn theo ảnh nguồn.
+
+## Các mức AI Enhance
+
+- **Safe**: ưu tiên giữ nhận dạng, bố cục, màu, chữ và logo sát ảnh gốc.
+- **Balanced**: tái tạo texture vừa phải, phù hợp ảnh quảng cáo và ảnh chụp thông thường.
+- **Creative**: tái dựng mạnh hơn, có nguy cơ thay đổi chi tiết nhỏ.
+
+AI tạo sinh không bảo đảm giữ chính xác tuyệt đối chữ, logo, barcode, màu in hoặc khuôn mặt. Luôn kiểm tra Before/After trước khi dùng cho artwork chính thức.
 
 ## Chạy ở chế độ phát triển
 
-Yêu cầu Node.js 22.
+Yêu cầu Node.js 22 trở lên.
 
 ```bash
 npm install
 npm start
 ```
 
-Kiểm tra cú pháp và chạy smoke test cho bốn pipeline local:
+Kiểm tra cú pháp và chạy smoke test cho các pipeline local:
 
 ```bash
 npm run check
 ```
 
-## Cấu hình Upscayl NCNN
+Smoke test không gọi Gemini hoặc OpenAI và không phát sinh phí API.
 
-Cài Upscayl chính thức hoặc tự tải/build `upscayl-bin` từ dự án chính thức. Trong ứng dụng:
+## Local AI Engine
 
-1. Bấm **Tự tìm** để dò bản Upscayl đã cài.
-2. Nếu không tìm thấy, bấm **Chọn binary** và chọn `upscayl-bin.exe` trên Windows hoặc `upscayl-bin` trên macOS.
-3. Bấm **Chọn model** và trỏ tới thư mục có từng cặp file `.param` + `.bin`.
+Runtime được nhúng trong installer all-in-one. Người dùng thông thường chỉ thấy trạng thái **Local AI Engine: Sẵn sàng**.
 
-Tên model được hỗ trợ:
+Khi cần xử lý sự cố, mở:
+
+**Cài đặt → Cấu hình Local Engine nâng cao**
+
+Các model hỗ trợ:
 
 - `upscayl-standard-4x`
 - `upscayl-lite-4x`
@@ -65,7 +100,7 @@ npm run dist:win
 Kết quả trong `release/`:
 
 - NSIS installer `.exe`
-- Portable `.exe` (tên file riêng, không ghi đè bản Setup)
+- Portable `.exe`
 
 ### macOS
 
@@ -78,36 +113,28 @@ npm run dist:mac:x64
 
 Kết quả trong `release/`:
 
-- `.dmg` và `.zip` đúng theo kiến trúc máy build
-- GitHub Actions build riêng Apple Silicon arm64 và Intel x64
+- `.dmg`
+- `.zip`
 
 ## GitHub Actions
 
 Workflow `.github/workflows/build-desktop.yml`:
 
-- kiểm tra cú pháp và chạy smoke test trên Ubuntu;
-- build Windows trên `windows-latest`;
-- build Apple Silicon trên `macos-15` và Intel trên `macos-15-intel`;
-- chạy smoke test trực tiếp trên từng hệ điều hành trước khi đóng gói;
-- upload installer vào mục **Actions → Artifacts**;
-- khi push tag `v*`, tự tạo GitHub Release và đính kèm installer.
-
-Ví dụ phát hành:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+- kiểm tra cú pháp và smoke test trên Ubuntu;
+- build Windows x64;
+- build macOS Apple Silicon và Intel;
+- upload installer vào **Actions → Artifacts**;
+- khi push tag `v*`, tự tạo GitHub Release.
 
 ## Chưa ký số
 
-Workflow mặc định xuất file **unsigned**:
+Workflow mặc định xuất file unsigned:
 
 - Windows có thể hiện SmartScreen “Unknown publisher”.
-- macOS có thể chặn Gatekeeper; dùng chuột phải → **Open** để mở lần đầu.
+- macOS có thể chặn Gatekeeper.
 
-Để phát hành thương mại, cần bổ sung Windows code-signing certificate và Apple Developer ID/notarization secrets.
+Để phân phối ổn định, cần Windows code-signing certificate và Apple Developer ID/notarization.
 
 ## License
 
-Code ứng dụng: MIT. Xem `THIRD_PARTY_NOTICES.md` trước khi phân phối, đặc biệt với Upscayl backend và từng model weight.
+Code ứng dụng: MIT. Xem `THIRD_PARTY_NOTICES.md` trước khi phân phối, đặc biệt với runtime Local AI và từng model weight.
