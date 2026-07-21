@@ -3,6 +3,7 @@ const path = require('node:path');
 const os = require('node:os');
 const sharp = require('sharp');
 const { runNcnnUpscale } = require('./engineService');
+const { flatBlend, protectedBlend } = require('./packagingProtectionService');
 
 const BENCHMARK_PRESETS = [
   {
@@ -28,8 +29,8 @@ const BENCHMARK_PRESETS = [
   },
   {
     id: 'packaging-hybrid',
-    label: 'Packaging Hybrid · Fidelity + Detail',
-    description: 'Trộn High Fidelity hiện tại với RealESRGAN Detail ở mức thấp để tăng texture nhưng giảm nguy cơ phá artwork.',
+    label: 'Packaging Hybrid · Protected',
+    description: 'Trộn High Fidelity với RealESRGAN Detail và tự giảm Detail tại chữ, logo, đường biên và hình học mạnh.',
     type: 'blend',
     baseModel: 'high-fidelity-4x',
     detailModel: 'realesrgan-x4plus'
@@ -67,6 +68,12 @@ function ensureBlendStrength(value) {
   return Math.max(0.05, Math.min(0.45, strength));
 }
 
+function ensureProtectionSensitivity(value) {
+  const sensitivity = Number(value);
+  if (!Number.isFinite(sensitivity)) return 65;
+  return Math.max(20, Math.min(95, sensitivity));
+}
+
 async function imageSummary(filePath) {
   const [metadata, stat] = await Promise.all([
     sharp(filePath, { failOn: 'none' }).metadata(),
@@ -90,27 +97,6 @@ async function copyAsPng(sourcePath, outputPath, dpi) {
     .toFile(outputPath);
 }
 
-async function blendOutputs(basePath, detailPath, outputPath, strength, dpi) {
-  const detailAlpha = await sharp(detailPath, { failOn: 'none' })
-    .ensureAlpha()
-    .extractChannel('alpha')
-    .linear(strength)
-    .png()
-    .toBuffer();
-
-  const detailOverlay = await sharp(detailPath, { failOn: 'none' })
-    .removeAlpha()
-    .joinChannel(detailAlpha)
-    .png()
-    .toBuffer();
-
-  await sharp(basePath, { failOn: 'none' })
-    .composite([{ input: detailOverlay, blend: 'over' }])
-    .withMetadata({ density: dpi })
-    .png({ compressionLevel: 7 })
-    .toFile(outputPath);
-}
-
 async function runBenchmark({
   settingsService,
   inputPath,
@@ -120,6 +106,8 @@ async function runBenchmark({
   scale = 2,
   dpi = 300,
   blendStrength = 0.2,
+  protectionEnabled = true,
+  protectionSensitivity = 65,
   onProgress
 }) {
   if (!inputPath) throw new Error('Chưa chọn ảnh nguồn cho Model Lab.');
@@ -133,6 +121,7 @@ async function runBenchmark({
   const safeScale = ensureScale(scale);
   const safeDpi = ensureDpi(dpi);
   const safeStrength = ensureBlendStrength(blendStrength);
+  const safeSensitivity = ensureProtectionSensitivity(protectionSensitivity);
   const parsed = path.parse(inputPath);
   const sessionDirectory = path.join(
     outputDirectory,
@@ -175,11 +164,32 @@ async function runBenchmark({
       const startedAt = Date.now();
 
       try {
+        let blendInfo = null;
         if (preset.type === 'blend') {
           const basePath = await runModel(preset.baseModel, progress);
           const detailPath = await runModel(preset.detailModel, progress);
-          progress(93, `đang trộn Fidelity ${(1 - safeStrength) * 100}% + Detail ${safeStrength * 100}%`);
-          await blendOutputs(basePath, detailPath, outputPath, safeStrength, safeDpi);
+          const maskPath = protectionEnabled
+            ? path.join(sessionDirectory, `${String(index + 1).padStart(2, '0')}_${sanitizeName(preset.id)}_protection-mask.png`)
+            : null;
+          progress(92, protectionEnabled ? 'đang tạo mask bảo vệ chữ, logo và cạnh' : 'đang trộn toàn ảnh');
+          blendInfo = protectionEnabled
+            ? await protectedBlend({
+              sourcePath: inputPath,
+              basePath,
+              detailPath,
+              outputPath,
+              strength: safeStrength,
+              sensitivity: safeSensitivity,
+              dpi: safeDpi,
+              maskOutputPath: maskPath
+            })
+            : await flatBlend({
+              basePath,
+              detailPath,
+              outputPath,
+              strength: safeStrength,
+              dpi: safeDpi
+            });
         } else {
           const modelOutput = await runModel(preset.model, progress);
           await copyAsPng(modelOutput, outputPath, safeDpi);
@@ -192,6 +202,8 @@ async function runBenchmark({
           outputPath,
           durationMs: Date.now() - startedAt,
           metadata: await imageSummary(outputPath),
+          protection: blendInfo?.protection || null,
+          blendStrength: blendInfo?.strength || null,
           error: null
         });
       } catch (error) {
@@ -202,6 +214,8 @@ async function runBenchmark({
           outputPath: null,
           durationMs: Date.now() - startedAt,
           metadata: null,
+          protection: null,
+          blendStrength: null,
           error: error.message || String(error)
         });
       }
@@ -209,13 +223,17 @@ async function runBenchmark({
 
     const reportPath = path.join(sessionDirectory, 'benchmark-report.json');
     const report = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       createdAt: new Date().toISOString(),
       inputPath,
       referencePath,
       scale: safeScale,
       dpi: safeDpi,
       blendStrength: safeStrength,
+      packagingProtection: {
+        enabled: Boolean(protectionEnabled),
+        sensitivity: safeSensitivity
+      },
       results
     };
     await fs.writeFile(reportPath, JSON.stringify(report, null, 2), 'utf8');
@@ -235,4 +253,9 @@ function listPresets() {
   return BENCHMARK_PRESETS.map((preset) => ({ ...preset }));
 }
 
-module.exports = { BENCHMARK_PRESETS, listPresets, runBenchmark };
+module.exports = {
+  BENCHMARK_PRESETS,
+  ensureProtectionSensitivity,
+  listPresets,
+  runBenchmark
+};
