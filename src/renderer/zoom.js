@@ -242,7 +242,20 @@
   });
 
   const observer = new MutationObserver((mutations) => {
+    const sourceChanged = mutations.some((mutation) => (
+      mutation.type === 'attributes'
+      && mutation.attributeName === 'src'
+      && mutation.target === previewImage
+    ));
     const imageChanged = mutations.some((mutation) => mutation.type === 'attributes' && mutation.attributeName === 'src');
+
+    if (sourceChanged) {
+      beforeImage.removeAttribute('src');
+      afterImage.removeAttribute('src');
+      compareStage.hidden = true;
+      compareControls.hidden = true;
+      sourceStage.hidden = false;
+    }
     if (imageChanged) fitView();
     syncVisibility();
   });
