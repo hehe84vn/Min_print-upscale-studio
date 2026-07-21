@@ -5,11 +5,17 @@ import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const sharp = require('sharp');
+const { BarcodeFormat, QRCodeWriter } = require('@zxing/library');
 const { inspectImage, processImage } = require('../src/main/services/imageService');
 const { buildPrompt } = require('../src/main/services/aiProviderService');
 const { listPresets } = require('../src/main/services/benchmarkService');
 const { EXPERIMENTAL_MODELS } = require('../src/main/services/engineService');
-const { createProtectionMask, protectedBlend } = require('../src/main/services/packagingProtectionService');
+const { createBarcodeMask, decodeBarcode } = require('../src/main/services/barcodeGuardService');
+const {
+  createProtectionMask,
+  createSemanticTextLogoMask,
+  protectedBlend
+} = require('../src/main/services/packagingProtectionService');
 
 const sourceSvg = Buffer.from(`
   <svg width="96" height="72" xmlns="http://www.w3.org/2000/svg">
@@ -53,17 +59,33 @@ try {
   }
   console.log(`Model Lab registry OK: ${benchmarkPresets.length} presets`);
 
+  const semanticMaskPath = path.join(workspace, 'semantic-mask.png');
+  const semanticMask = await createSemanticTextLogoMask({
+    inputPath,
+    width: 192,
+    height: 144,
+    sensitivity: 65,
+    outputPath: semanticMaskPath
+  });
+  if (semanticMask.coveragePercent < 0 || semanticMask.coveragePercent >= 100) {
+    throw new Error(`Semantic mask coverage is unexpected: ${semanticMask.coveragePercent}%`);
+  }
+
   const maskPath = path.join(workspace, 'protection-mask.png');
   const mask = await createProtectionMask({
     inputPath,
     width: 192,
     height: 144,
     sensitivity: 65,
-    outputPath: maskPath
+    semanticEnabled: true,
+    codeGuardEnabled: false,
+    outputPath: maskPath,
+    semanticOutputPath: semanticMaskPath
   });
   if (mask.coveragePercent <= 0 || mask.coveragePercent >= 100) {
     throw new Error(`Protection mask coverage is unexpected: ${mask.coveragePercent}%`);
   }
+
   const basePath = path.join(workspace, 'base.png');
   const detailPath = path.join(workspace, 'detail.png');
   const protectedOutputPath = path.join(workspace, 'protected-blend.png');
@@ -76,14 +98,48 @@ try {
     outputPath: protectedOutputPath,
     strength: 0.2,
     sensitivity: 65,
+    semanticEnabled: true,
+    codeGuardEnabled: false,
     dpi: 300,
-    maskOutputPath: maskPath
+    maskOutputPath: maskPath,
+    semanticMaskOutputPath: semanticMaskPath
   });
   const protectedStat = await stat(protectedOutputPath);
-  if (!blend.protection?.enabled || protectedStat.size < 64) {
-    throw new Error('Packaging Safe protected blend did not produce a valid result.');
+  if (!blend.protection?.enabled || !blend.protection.semantic?.enabled || protectedStat.size < 64) {
+    throw new Error('Semantic protected blend did not produce a valid result.');
   }
-  console.log(`Protection mask OK: ${blend.protection.coveragePercent}% coverage`);
+  console.log(`Semantic protection OK: ${blend.protection.coveragePercent}% combined coverage`);
+
+  const qrText = 'PRINT-UPSCALE-STUDIO-V2.3-CODE-GUARD';
+  const qrSize = 256;
+  const qrMatrix = new QRCodeWriter().encode(qrText, BarcodeFormat.QR_CODE, qrSize, qrSize);
+  const qrPixels = Buffer.alloc(qrSize * qrSize * 3, 255);
+  for (let y = 0; y < qrSize; y += 1) {
+    for (let x = 0; x < qrSize; x += 1) {
+      if (!qrMatrix.get(x, y)) continue;
+      const offset = (y * qrSize + x) * 3;
+      qrPixels[offset] = 0;
+      qrPixels[offset + 1] = 0;
+      qrPixels[offset + 2] = 0;
+    }
+  }
+  const qrPath = path.join(workspace, 'code-guard-qr.png');
+  await sharp(qrPixels, { raw: { width: qrSize, height: qrSize, channels: 3 } }).png().toFile(qrPath);
+  const qrDetection = await decodeBarcode(qrPath);
+  if (!qrDetection.detected || qrDetection.value !== qrText || qrDetection.formatName !== 'QR_CODE') {
+    throw new Error(`QR Code Guard decode failed: ${qrDetection.error || qrDetection.valuePreview || 'unknown'}`);
+  }
+  const qrMaskPath = path.join(workspace, 'qr-mask.png');
+  const qrMask = await createBarcodeMask({
+    detection: qrDetection,
+    width: 512,
+    height: 512,
+    outputPath: qrMaskPath
+  });
+  if (!qrMask?.rect || (await stat(qrMaskPath)).size < 64) {
+    throw new Error('QR Code Guard mask was not created.');
+  }
+  console.log(`QR Code Guard OK: ${qrDetection.formatName}`);
 
   const jobs = [
     ['upscale', 'upscale.png', { scale: 2, useNcnn: false, sharpen: true, dpi: 300 }],
