@@ -1,7 +1,7 @@
 {
   "name": "print-upscale-studio",
-  "version": "2.3.0",
-  "description": "Hybrid local and cloud AI image enhancement toolkit for print workflows, with semantic text/logo protection and QR/barcode validation for packaging.",
+  "version": "2.3.1",
+  "description": "Hybrid local and cloud AI image enhancement toolkit for print workflows, with refined anti-block semantic masks and QR/barcode protection for packaging.",
   "main": "src/main/main.js",
   "author": "ngoctunguyenle@gmail.com",
   "license": "MIT",
