@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data:; img-src 'self' file: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self';" />
-  <title>Print Upscale Studio</title>
+  <title>Print Upscale Studio V2</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -12,14 +12,15 @@
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark">PU</div>
-        <div><strong>Print Upscale</strong><span>Studio · Local Processing</span></div>
+        <div><strong>Print Upscale</strong><span>Studio V2 · Hybrid AI</span></div>
       </div>
 
       <nav id="toolNav" class="tool-nav">
-        <button class="nav-item active" data-tool="upscale"><b>01</b><span>AI Upscale<small>NCNN/Vulkan hoặc fallback</small></span></button>
-        <button class="nav-item" data-tool="restore"><b>02</b><span>Restore Safe<small>Khử nhiễu, phục hồi màu</small></span></button>
-        <button class="nav-item" data-tool="vector-logo"><b>03</b><span>Vector Logo<small>Logo màu / line art → SVG</small></span></button>
-        <button class="nav-item" data-tool="text-print"><b>04</b><span>Text Print Safe<small>Tăng nét, giữ nguyên glyph</small></span></button>
+        <button class="nav-item active" data-tool="upscale"><b>01</b><span>Local Enhance<small>Nhanh · riêng tư · không phí API</small></span></button>
+        <button class="nav-item" data-tool="ai-enhance"><b>02</b><span>AI Enhance<small>Tái tạo chi tiết bằng AI Cloud</small></span></button>
+        <button class="nav-item" data-tool="restore"><b>03</b><span>Restore Safe<small>Khử nhiễu, phục hồi màu</small></span></button>
+        <button class="nav-item" data-tool="text-print"><b>04</b><span>Text & Artwork<small>Tăng nét, giữ nguyên glyph</small></span></button>
+        <button class="nav-item" data-tool="vector-logo"><b>05</b><span>Vector Logo<small>Logo màu / line art → SVG</small></span></button>
       </nav>
 
       <button id="appSettingsBtn" class="settings-button" type="button">
@@ -28,13 +29,8 @@
       </button>
 
       <section class="engine-card">
-        <div class="card-title"><span>NCNN Engine</span><i id="engineDot"></i></div>
+        <div class="card-title"><span>Local AI Engine</span><i id="engineDot"></i></div>
         <p id="engineStatus">Đang kiểm tra...</p>
-        <div class="engine-actions">
-          <button id="autoDetectBtn" class="secondary">Tự tìm</button>
-          <button id="engineSetupBtn" class="secondary">Chọn binary</button>
-          <button id="modelsSetupBtn" class="secondary">Chọn model</button>
-        </div>
       </section>
 
       <p class="creator-credit">Sản phẩm được tạo bởi: ngoctunguyenle@gmail.com</p>
@@ -43,32 +39,60 @@
     <main class="workspace">
       <header class="topbar">
         <div>
-          <p class="eyebrow">CÔNG CỤ XỬ LÝ ẢNH LOCAL</p>
-          <h1 id="toolTitle">AI Upscale</h1>
-          <p id="toolDescription">Phóng lớn ảnh bằng backend Upscayl NCNN hoặc Lanczos dự phòng.</p>
+          <p class="eyebrow">IMAGE ENHANCEMENT FOR PRINT</p>
+          <h1 id="toolTitle">Local Enhance</h1>
+          <p id="toolDescription">Tăng kích thước và độ nét bằng bộ xử lý AI trên thiết bị.</p>
         </div>
-        <div class="privacy-badge">Ảnh không rời khỏi máy</div>
+        <div id="privacyBadge" class="privacy-badge">Ảnh không rời khỏi máy</div>
       </header>
 
       <section class="content-grid">
-        <div class="preview-panel">
-          <div id="dropZone" class="drop-zone">
-            <div id="emptyState">
-              <div class="upload-icon">＋</div>
-              <h2>Chọn ảnh để bắt đầu</h2>
-              <p>PNG, JPG, WEBP, TIFF hoặc BMP</p>
-              <button id="chooseInputBtn" class="primary">Chọn ảnh</button>
+        <div class="preview-column">
+          <section class="preview-panel">
+            <div id="dropZone" class="drop-zone">
+              <div id="emptyState">
+                <div class="upload-icon">＋</div>
+                <h2>Chọn ảnh để bắt đầu</h2>
+                <p>PNG, JPG, WEBP, TIFF hoặc BMP</p>
+                <button id="chooseInputBtn" class="primary">Chọn ảnh</button>
+              </div>
+
+              <div id="sourceStage" class="source-stage" hidden>
+                <img id="previewImage" alt="Ảnh nguồn" />
+              </div>
+
+              <div id="compareStage" class="compare-stage" hidden>
+                <img id="beforeImage" class="compare-image" alt="Ảnh trước xử lý" />
+                <div id="afterClip" class="after-clip">
+                  <img id="afterImage" class="compare-image" alt="Ảnh sau xử lý" />
+                </div>
+                <div id="compareDivider" class="compare-divider"><span>↔</span></div>
+              </div>
             </div>
-            <img id="previewImage" alt="Ảnh nguồn" hidden />
-          </div>
-          <div class="file-strip">
-            <span id="inputName">Chưa có file</span>
-            <button id="changeInputBtn" class="text-button">Đổi ảnh</button>
-          </div>
+
+            <div id="compareControls" class="compare-controls" hidden>
+              <span>TRƯỚC</span>
+              <input id="compareSlider" type="range" min="0" max="100" value="50" />
+              <span>SAU</span>
+              <button id="showSourceBtn" class="text-button" type="button">Chỉ xem ảnh gốc</button>
+            </div>
+
+            <div class="file-strip">
+              <span id="inputName">Chưa có file</span>
+              <button id="changeInputBtn" class="text-button">Đổi ảnh</button>
+            </div>
+          </section>
+
+          <section id="inspectorCard" class="inspector-card" hidden>
+            <div><small>KÍCH THƯỚC</small><strong id="pixelInfo">—</strong></div>
+            <div><small>IN 300 DPI</small><strong id="printInfo">—</strong></div>
+            <div><small>ĐỊNH DẠNG</small><strong id="formatInfo">—</strong></div>
+            <div><small>DUNG LƯỢNG</small><strong id="sizeInfo">—</strong></div>
+          </section>
         </div>
 
         <aside class="settings-panel">
-          <div class="setting-group common-setting">
+          <div id="scaleSetting" class="setting-group common-setting">
             <label for="scaleSelect">Tỷ lệ đầu ra</label>
             <select id="scaleSelect">
               <option value="2">2×</option>
@@ -77,21 +101,85 @@
             </select>
           </div>
 
+          <div id="dpiSetting" class="setting-group common-setting">
+            <label for="dpiSelect">DPI metadata</label>
+            <select id="dpiSelect">
+              <option value="150">150 DPI</option>
+              <option value="200">200 DPI</option>
+              <option value="300" selected>300 DPI</option>
+            </select>
+          </div>
+
+          <div id="formatSetting" class="setting-group common-setting">
+            <label for="formatSelect">Định dạng đầu ra</label>
+            <select id="formatSelect">
+              <option value="png">PNG · lossless</option>
+              <option value="jpeg">JPEG · chất lượng cao</option>
+              <option value="tiff">TIFF · LZW</option>
+              <option value="webp">WebP</option>
+            </select>
+          </div>
+
           <div id="upscaleSettings" class="tool-settings">
             <div class="setting-group">
-              <label for="modelSelect">Model NCNN</label>
+              <label for="modelSelect">Preset hình ảnh</label>
               <select id="modelSelect">
-                <option value="upscayl-standard-4x">Upscayl Standard</option>
-                <option value="upscayl-lite-4x">Upscayl Lite</option>
-                <option value="high-fidelity-4x">High Fidelity</option>
-                <option value="remacri-4x">Remacri</option>
-                <option value="ultramix-balanced-4x">UltraMix Balanced</option>
-                <option value="ultrasharp-4x">UltraSharp</option>
-                <option value="digital-art-4x">Digital Art</option>
+                <option value="high-fidelity-4x">Ảnh chụp tự nhiên</option>
+                <option value="ultrasharp-4x">Làm nét mạnh</option>
+                <option value="remacri-4x">Artwork & bao bì</option>
+                <option value="ultramix-balanced-4x">Cân bằng tổng thể</option>
+                <option value="digital-art-4x">Minh họa kỹ thuật số</option>
+                <option value="upscayl-lite-4x">Xử lý nhanh</option>
+                <option value="upscayl-standard-4x">Tiêu chuẩn</option>
               </select>
             </div>
-            <label class="check-row"><input id="useNcnn" type="checkbox" checked /><span>Dùng NCNN/Vulkan</span></label>
-            <label class="check-row"><input id="allowFallback" type="checkbox" checked /><span>Cho phép fallback Lanczos</span></label>
+            <div class="notice">Xử lý hoàn toàn trên máy. Phù hợp khi cần giữ nội dung sát ảnh gốc và không phát sinh phí API.</div>
+          </div>
+
+          <div id="aiEnhanceSettings" class="tool-settings" hidden>
+            <div class="cloud-notice"><b>AI Cloud</b><span>Ảnh sẽ được gửi tới nhà cung cấp AI đã chọn.</span></div>
+
+            <div class="setting-group">
+              <label for="jobProviderSelect">Nhà cung cấp</label>
+              <select id="jobProviderSelect">
+                <option value="gemini">Google Gemini</option>
+                <option value="openai">OpenAI</option>
+              </select>
+            </div>
+
+            <div class="setting-group">
+              <label for="aiModelSelect">Model hình ảnh</label>
+              <select id="aiModelSelect"></select>
+            </div>
+
+            <div class="setting-group">
+              <label>Mức tái tạo</label>
+              <div class="mode-grid">
+                <label class="mode-card"><input type="radio" name="aiMode" value="safe" checked /><span><b>Safe</b><small>Giữ giống ảnh gốc</small></span></label>
+                <label class="mode-card"><input type="radio" name="aiMode" value="balanced" /><span><b>Balanced</b><small>Chi tiết tự nhiên hơn</small></span></label>
+                <label class="mode-card"><input type="radio" name="aiMode" value="creative" /><span><b>Creative</b><small>Tái dựng mạnh</small></span></label>
+              </div>
+            </div>
+
+            <div id="aiSizeSetting" class="setting-group">
+              <label for="aiImageSize">Độ phân giải AI</label>
+              <select id="aiImageSize">
+                <option value="2K">2K</option>
+                <option value="4K">4K</option>
+              </select>
+            </div>
+
+            <div class="protection-grid">
+              <label class="check-row"><input id="protectFace" type="checkbox" checked /><span>Giữ khuôn mặt</span></label>
+              <label class="check-row"><input id="protectText" type="checkbox" checked /><span>Giữ chữ</span></label>
+              <label class="check-row"><input id="protectLogo" type="checkbox" checked /><span>Giữ logo</span></label>
+              <label class="check-row"><input id="preserveColor" type="checkbox" checked /><span>Giữ màu gốc</span></label>
+            </div>
+
+            <div class="setting-group">
+              <label for="customPrompt">Yêu cầu bổ sung</label>
+              <textarea id="customPrompt" class="text-area" rows="3" maxlength="2000" placeholder="Ví dụ: làm rõ chất liệu vải nhưng giữ nguyên khuôn mặt và màu sản phẩm"></textarea>
+            </div>
           </div>
 
           <div id="restoreSettings" class="tool-settings" hidden>
@@ -100,17 +188,17 @@
             <div class="setting-group"><label>Tương phản <output id="contrastValue">1.05</output></label><input id="contrast" type="range" min="0.85" max="1.2" value="1.05" step="0.05" /></div>
           </div>
 
+          <div id="textSettings" class="tool-settings" hidden>
+            <div class="notice">Không OCR và không gõ lại chữ; giữ nguyên font, dấu và khoảng cách chữ từ ảnh gốc.</div>
+            <div class="setting-group"><label>Độ nét cạnh chữ <output id="edgeValue">1.2</output></label><input id="edge" type="range" min="0.2" max="2.5" value="1.2" step="0.1" /></div>
+          </div>
+
           <div id="vectorSettings" class="tool-settings" hidden>
-            <div class="notice">VTracer local hỗ trợ cả logo màu và logo một màu. Với logo in ấn, nên dùng ít màu và kiểm tra node sau khi xuất.</div>
+            <div class="notice">Vector hóa local. Nên kiểm tra số node và hiệu chỉnh trong Illustrator trước khi dùng cho artwork chính thức.</div>
             <div class="setting-group"><label for="colorMode">Chế độ vector</label><select id="colorMode"><option value="color">Màu phẳng</option><option value="binary">Đơn sắc</option></select></div>
             <div class="setting-group"><label>Ngưỡng đen trắng <output id="thresholdValue">170</output></label><input id="threshold" type="range" min="20" max="235" value="170" step="1" /></div>
             <div class="setting-group"><label>Loại chi tiết nhỏ <output id="turdValue">4</output></label><input id="turdSize" type="range" min="0" max="20" value="4" step="1" /></div>
             <label class="check-row"><input id="invertVector" type="checkbox" /><span>Đảo vùng đen/trắng</span></label>
-          </div>
-
-          <div id="textSettings" class="tool-settings" hidden>
-            <div class="notice">Không OCR và không gõ lại chữ; giữ nguyên font, dấu và khoảng cách chữ từ ảnh gốc.</div>
-            <div class="setting-group"><label>Độ nét cạnh chữ <output id="edgeValue">1.2</output></label><input id="edge" type="range" min="0.2" max="2.5" value="1.2" step="0.1" /></div>
           </div>
 
           <div class="output-row">
@@ -133,7 +221,7 @@
     <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
       <header class="modal-header">
         <div>
-          <p class="eyebrow">CẤU HÌNH CLOUD AI</p>
+          <p class="eyebrow">CẤU HÌNH V2</p>
           <h2 id="settingsTitle">AI Provider & API key</h2>
         </div>
         <button id="closeSettingsBtn" class="icon-button" type="button" aria-label="Đóng">×</button>
@@ -152,7 +240,7 @@
       <div class="api-key-card">
         <div class="api-key-heading">
           <div><strong>Google Gemini API</strong><small id="geminiKeyStatus">Chưa lưu API key</small></div>
-          <button id="clearGeminiKeyBtn" class="danger-text" type="button">Xóa key</button>
+          <div class="key-actions"><button id="testGeminiKeyBtn" class="secondary" type="button">Kiểm tra</button><button id="clearGeminiKeyBtn" class="danger-text" type="button">Xóa key</button></div>
         </div>
         <input id="geminiApiKeyInput" class="text-input" type="password" autocomplete="off" spellcheck="false" placeholder="Nhập Gemini API key mới" />
       </div>
@@ -160,10 +248,20 @@
       <div class="api-key-card">
         <div class="api-key-heading">
           <div><strong>OpenAI API</strong><small id="openAiKeyStatus">Chưa lưu API key</small></div>
-          <button id="clearOpenAiKeyBtn" class="danger-text" type="button">Xóa key</button>
+          <div class="key-actions"><button id="testOpenAiKeyBtn" class="secondary" type="button">Kiểm tra</button><button id="clearOpenAiKeyBtn" class="danger-text" type="button">Xóa key</button></div>
         </div>
         <input id="openAiApiKeyInput" class="text-input" type="password" autocomplete="off" spellcheck="false" placeholder="Nhập OpenAI API key mới" />
       </div>
+
+      <details class="advanced-details">
+        <summary>Cấu hình Local Engine nâng cao</summary>
+        <p>Chỉ dùng khi bộ xử lý tích hợp không tự khởi động.</p>
+        <div class="advanced-actions">
+          <button id="autoDetectBtn" class="secondary" type="button">Tự kiểm tra</button>
+          <button id="engineSetupBtn" class="secondary" type="button">Chọn binary</button>
+          <button id="modelsSetupBtn" class="secondary" type="button">Chọn model</button>
+        </div>
+      </details>
 
       <p id="aiSettingsMessage" class="modal-message" hidden></p>
 
