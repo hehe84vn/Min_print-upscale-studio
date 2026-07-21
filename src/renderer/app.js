@@ -3,7 +3,8 @@ const state = {
   inputPath: null,
   outputPath: null,
   busy: false,
-  engine: null
+  engine: null,
+  aiSettings: null
 };
 
 const toolInfo = {
@@ -121,6 +122,94 @@ async function refreshEngine(statusPromise) {
   });
 }
 
+function setAiSettingsMessage(message, isError = false) {
+  const element = $('aiSettingsMessage');
+  element.textContent = message;
+  element.classList.toggle('error', isError);
+  element.hidden = !message;
+}
+
+function renderAiSettings(settings) {
+  state.aiSettings = settings;
+  $('aiProviderSelect').value = settings.provider || 'gemini';
+
+  const geminiSuffix = settings.gemini?.suffix;
+  const openAiSuffix = settings.openai?.suffix;
+  $('geminiKeyStatus').textContent = settings.gemini?.configured
+    ? `Đã lưu an toàn · kết thúc bằng ${geminiSuffix}`
+    : 'Chưa lưu API key';
+  $('openAiKeyStatus').textContent = settings.openai?.configured
+    ? `Đã lưu an toàn · kết thúc bằng ${openAiSuffix}`
+    : 'Chưa lưu API key';
+
+  $('clearGeminiKeyBtn').disabled = !settings.gemini?.configured;
+  $('clearOpenAiKeyBtn').disabled = !settings.openai?.configured;
+  $('saveSettingsBtn').disabled = settings.secureStorageAvailable === false;
+
+  if (settings.secureStorageAvailable === false) {
+    setAiSettingsMessage(settings.error || 'Bộ lưu trữ bảo mật của hệ điều hành chưa sẵn sàng.', true);
+  }
+}
+
+async function loadAiSettings() {
+  setAiSettingsMessage('');
+  try {
+    renderAiSettings(await window.studio.getAiSettings());
+  } catch (error) {
+    setAiSettingsMessage(error.message || String(error), true);
+  }
+}
+
+async function openSettings() {
+  $('settingsModal').hidden = false;
+  $('geminiApiKeyInput').value = '';
+  $('openAiApiKeyInput').value = '';
+  await loadAiSettings();
+  $('aiProviderSelect').focus();
+}
+
+function closeSettings() {
+  $('settingsModal').hidden = true;
+  $('geminiApiKeyInput').value = '';
+  $('openAiApiKeyInput').value = '';
+  setAiSettingsMessage('');
+}
+
+async function saveAiSettings() {
+  const button = $('saveSettingsBtn');
+  button.disabled = true;
+  setAiSettingsMessage('Đang lưu...');
+
+  try {
+    const settings = await window.studio.saveAiSettings({
+      provider: $('aiProviderSelect').value,
+      geminiApiKey: $('geminiApiKeyInput').value,
+      openAiApiKey: $('openAiApiKeyInput').value
+    });
+    $('geminiApiKeyInput').value = '';
+    $('openAiApiKeyInput').value = '';
+    renderAiSettings(settings);
+    setAiSettingsMessage('Đã lưu cài đặt AI an toàn trên thiết bị.');
+  } catch (error) {
+    setAiSettingsMessage(error.message || String(error), true);
+  } finally {
+    button.disabled = state.aiSettings?.secureStorageAvailable === false;
+  }
+}
+
+async function clearAiKey(provider) {
+  const providerName = provider === 'gemini' ? 'Gemini' : 'OpenAI';
+  if (!window.confirm(`Xóa API key ${providerName} đã lưu trên máy này?`)) return;
+
+  setAiSettingsMessage('Đang xóa...');
+  try {
+    renderAiSettings(await window.studio.clearAiKey(provider));
+    setAiSettingsMessage(`Đã xóa API key ${providerName}.`);
+  } catch (error) {
+    setAiSettingsMessage(error.message || String(error), true);
+  }
+}
+
 function bindRange(id, outputId) {
   const input = $(id);
   const output = $(outputId);
@@ -138,6 +227,18 @@ $('toolNav').addEventListener('click', (event) => {
 $('autoDetectBtn').addEventListener('click', () => refreshEngine(window.studio.autoDetectEngine()));
 $('engineSetupBtn').addEventListener('click', () => refreshEngine(window.studio.selectEngineBinary()));
 $('modelsSetupBtn').addEventListener('click', () => refreshEngine(window.studio.selectModelsDirectory()));
+$('appSettingsBtn').addEventListener('click', openSettings);
+$('closeSettingsBtn').addEventListener('click', closeSettings);
+$('cancelSettingsBtn').addEventListener('click', closeSettings);
+$('saveSettingsBtn').addEventListener('click', saveAiSettings);
+$('clearGeminiKeyBtn').addEventListener('click', () => clearAiKey('gemini'));
+$('clearOpenAiKeyBtn').addEventListener('click', () => clearAiKey('openai'));
+$('settingsModal').addEventListener('click', (event) => {
+  if (event.target === $('settingsModal')) closeSettings();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !$('settingsModal').hidden) closeSettings();
+});
 
 const dropZone = $('dropZone');
 ['dragenter', 'dragover'].forEach((eventName) => dropZone.addEventListener(eventName, (event) => {
