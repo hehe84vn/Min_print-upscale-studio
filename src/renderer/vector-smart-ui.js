@@ -14,6 +14,7 @@
       .smart-vector-hint { margin: -4px 0 2px; color: #8ea49a; font-size: 9px; line-height: 1.45; }
       .smart-vector-badge { display: inline-block; margin-left: 5px; padding: 2px 6px; border-radius: 99px; background: #244433; color: #bde8c9; font-size: 8px; letter-spacing: .07em; }
       .vector-result-lines { white-space: pre-line; line-height: 1.5; }
+      .geometry-lock-row { border: 1px solid #345542; background: #101b15; border-radius: 9px; padding: 9px; }
     `;
     document.head.append(style);
   }
@@ -23,8 +24,12 @@
     const notice = settings.querySelector('.notice');
     if (notice) {
       notice.classList.add('smart-vector-notice');
-      notice.innerHTML = '<b>Smart Multi-Pass Vector</b><span class="smart-vector-badge">LOCAL</span><br>Chạy nhiều candidate, so fidelity và độ phức tạp rồi chọn SVG tốt nhất.';
+      notice.innerHTML = '<b>Smart Multi-Pass Vector</b><span class="smart-vector-badge">GEOMETRY LOCK</span><br>Tự nhận diện logo đơn sắc, giữ góc sắc và phạt đường thẳng bị biến thành đường cong.';
     }
+
+    const colorMode = get('colorMode');
+    if (colorMode?.options?.[0]) colorMode.options[0].textContent = 'Tự động / màu phẳng';
+    if (colorMode?.options?.[1]) colorMode.options[1].textContent = 'Ép đơn sắc';
 
     const firstGroup = settings.querySelector('.setting-group');
     const controls = document.createElement('section');
@@ -56,14 +61,19 @@
 
     const cleanup = document.createElement('label');
     cleanup.className = 'check-row';
-    cleanup.innerHTML = '<input id="vectorBackgroundCleanup" type="checkbox" checked><span>Tự loại nền trắng phẳng ở mép ảnh</span>';
+    cleanup.innerHTML = '<input id="vectorBackgroundCleanup" type="checkbox" checked><span>Tự loại nền trắng phẳng ở mép ảnh màu</span>';
     const invert = get('invertVector')?.closest('label');
     invert?.insertAdjacentElement('afterend', cleanup);
 
+    const geometryLock = document.createElement('label');
+    geometryLock.className = 'check-row geometry-lock-row';
+    geometryLock.innerHTML = '<input id="vectorGeometryLock" type="checkbox" checked><span>Geometry Lock: giữ góc, snap cạnh ngang/dọc và đổi Bézier gần thẳng thành line</span>';
+    cleanup.insertAdjacentElement('afterend', geometryLock);
+
     const hint = document.createElement('p');
     hint.className = 'smart-vector-hint';
-    hint.textContent = 'Smart Auto chạy 3 candidate. Giữ chi tiết ưu tiên fidelity; Ít node tăng mức đơn giản hóa nhưng vẫn kiểm tra lại cạnh.';
-    cleanup.insertAdjacentElement('afterend', hint);
+    hint.textContent = 'Logo đơn sắc được threshold ở kích thước gốc, không phóng Lanczos trước trace. Smart Auto so Polygon và Spline bằng Corner Preservation.';
+    geometryLock.insertAdjacentElement('afterend', hint);
 
     const turd = get('turdSize');
     const turdValue = get('turdValue');
@@ -83,9 +93,11 @@
     const thresholdGroup = get('threshold')?.closest('.setting-group');
     const invertRow = get('invertVector')?.closest('label');
     const paletteGroup = get('vectorPaletteColors')?.closest('.setting-group');
+    const cleanupRow = get('vectorBackgroundCleanup')?.closest('label');
     if (thresholdGroup) thresholdGroup.hidden = !binary;
     if (invertRow) invertRow.hidden = !binary;
     if (paletteGroup) paletteGroup.hidden = binary;
+    if (cleanupRow) cleanupRow.hidden = binary;
   }
 
   function vectorOptions() {
@@ -97,6 +109,7 @@
       turdSize: Number(get('turdSize')?.value || 1),
       invert: Boolean(get('invertVector')?.checked),
       backgroundCleanup: get('vectorBackgroundCleanup')?.checked !== false,
+      geometryLock: get('vectorGeometryLock')?.checked !== false,
       paletteColors: paletteValue || null
     };
   }
@@ -119,15 +132,29 @@
     const selected = report?.candidates?.find((candidate) => candidate.id === report.selectedCandidate);
     if (!report || !selected) return `Đã lưu SVG: ${outputPath}`;
     const metrics = selected.metrics || {};
+    const lock = selected.geometryLock || {};
     const mode = selected.label || report.selectedCandidate;
+    const sourceMode = report.autoMonochrome
+      ? `Tự nhận diện đơn sắc ${report.source?.analysis?.confidence ?? '—'}%`
+      : report.effectiveColorMode === 'binary'
+        ? 'Đơn sắc'
+        : 'Màu';
     const reportPath = payload.reportPath ? `\nBáo cáo: ${payload.reportPath}` : '';
+    const geometryLine = report.effectiveColorMode === 'binary'
+      ? `Corner ${metrics.cornerPreservation ?? '—'}% · Straight ${metrics.straightnessScore ?? '—'}% · Axis ${metrics.axisAgreement ?? '—'}%`
+      : `Fidelity ${metrics.fidelity ?? '—'}% · Edge ${metrics.edgeAgreement ?? '—'}%`;
+    const cleanupLine = report.geometryLockEnabled && lock
+      ? `Geometry Lock: ${lock.curvesConvertedToLines ?? 0} curve→line · ${lock.axisSnaps ?? 0} snap · bỏ ${lock.collinearNodesRemoved ?? 0} node thẳng hàng`
+      : null;
     return [
       `Đã lưu SVG: ${outputPath}`,
-      `${mode} · điểm ${report.selectedScore}/100`,
+      `${mode} · điểm ${report.selectedScore}/100 · ${sourceMode}`,
       `Fidelity ${metrics.fidelity ?? '—'}% · Edge ${metrics.edgeAgreement ?? '—'}%`,
+      geometryLine,
       `${metrics.pathCount ?? '—'} path · khoảng ${metrics.nodeEstimate ?? '—'} node · ${metrics.colorCount ?? '—'} màu`,
+      cleanupLine,
       `Đã so ${report.candidates.length} candidate${reportPath}`
-    ].join('\n');
+    ].filter(Boolean).join('\n');
   }
 
   async function runSmartVector(event) {
@@ -144,7 +171,7 @@
       get('progressWrap').hidden = false;
       get('resultBox').hidden = true;
       get('progressBar').style.width = '1%';
-      get('progressText').textContent = 'Đang chuẩn bị Smart Multi-Pass Vector...';
+      get('progressText').textContent = 'Đang nhận diện hình học và chuẩn bị Geometry Lock...';
 
       const response = await window.studio.process({
         operation: 'vector-logo',
@@ -183,10 +210,10 @@
   function syncVectorBrand(event) {
     const button = event.target.closest('.nav-item');
     if (!button || button.dataset.tool !== 'vector-logo') return;
-    document.title = 'Print Upscale Studio V2.8 Smart Vector';
+    document.title = 'Print Upscale Studio V2.8.1 Geometry Lock';
     const brandVersion = document.querySelector('.brand span');
-    if (brandVersion) brandVersion.textContent = 'Studio V2.8 · Smart Vector';
-    get('toolDescription').textContent = 'Multi-pass local tracing, giữ chi tiết và giảm node dư bằng quality scoring.';
+    if (brandVersion) brandVersion.textContent = 'Studio V2.8.1 · Geometry Lock';
+    get('toolDescription').textContent = 'Monochrome Geometry Lock, Polygon candidate, corner scoring và snap cạnh thẳng.';
   }
 
   installStyles();
