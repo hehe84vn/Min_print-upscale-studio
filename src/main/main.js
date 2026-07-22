@@ -1,12 +1,13 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { pathToFileURL } = require('node:url');
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, session } = require('electron');
 const { SettingsService } = require('./services/settingsService');
 const { SecureSecretsService } = require('./services/secureSecretsService');
 const engineService = require('./services/engineService');
 const benchmarkService = require('./services/benchmarkService');
 const colorOutputService = require('./services/colorOutputService');
+const storageHygieneService = require('./services/storageHygieneService');
 const { inspectImage, processImage, suggestedOutput } = require('./services/imageService');
 const { testConnection } = require('./services/aiProviderService');
 
@@ -18,6 +19,11 @@ const AI_PROVIDERS = new Set(['gemini', 'openai']);
 const AI_SECRET_NAMES = {
   gemini: 'geminiApiKey',
   openai: 'openAiApiKey'
+};
+
+const DEFAULT_STORAGE_SETTINGS = {
+  autoCleanupTemp: true,
+  tempRetentionHours: 24
 };
 
 const IMAGE_FILTER = {
@@ -32,6 +38,15 @@ const OUTPUT_FORMATS = {
   webp: { extension: '.webp', filter: { name: 'WebP image', extensions: ['webp'] } }
 };
 
+function normalizeStorageSettings(value = {}) {
+  return {
+    autoCleanupTemp: value.autoCleanupTemp !== false,
+    tempRetentionHours: [6, 12, 24, 48, 72, 168].includes(Number(value.tempRetentionHours))
+      ? Number(value.tempRetentionHours)
+      : DEFAULT_STORAGE_SETTINGS.tempRetentionHours
+  };
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1380,
@@ -39,7 +54,7 @@ function createWindow() {
     minWidth: 1040,
     minHeight: 700,
     backgroundColor: '#111317',
-    title: 'Print Upscale Studio V2.5 Color Output',
+    title: 'Print Upscale Studio V2.6 Storage & Model Lab CMYK',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -77,6 +92,16 @@ async function getAiSettingsSummary() {
       error: error.message
     };
   }
+}
+
+async function getStorageSettingsSummary() {
+  const saved = await settingsService.read();
+  const settings = normalizeStorageSettings(saved.storageHygiene || {});
+  const status = await storageHygieneService.getStorageStatus({
+    electronSession: session.defaultSession,
+    tempRoot: app.getPath('temp')
+  });
+  return { settings, status };
 }
 
 function registerIpc() {
@@ -143,8 +168,13 @@ function registerIpc() {
 
   ipcMain.handle('benchmark:run', async (_event, payload = {}) => {
     emitProgress(1, 'Khởi tạo Model Lab');
+    const saved = await settingsService.read();
     return benchmarkService.runBenchmark({
       ...payload,
+      colorOutputSettings: {
+        ...(saved.colorOutput || {}),
+        ...(payload.colorOutputSettings || {})
+      },
       settingsService,
       onProgress: (percent, message) => emitProgress(percent, message)
     });
@@ -182,6 +212,47 @@ function registerIpc() {
     });
     emitProgress(100, 'CMYK copy hoàn tất');
     return result;
+  });
+
+  ipcMain.handle('storage:settings:get', () => getStorageSettingsSummary());
+
+  ipcMain.handle('storage:settings:save', async (_event, payload = {}) => {
+    const storageHygiene = normalizeStorageSettings(payload);
+    await settingsService.write({ storageHygiene });
+    return getStorageSettingsSummary();
+  });
+
+  ipcMain.handle('storage:status', () => storageHygieneService.getStorageStatus({
+    electronSession: session.defaultSession,
+    tempRoot: app.getPath('temp')
+  }));
+
+  ipcMain.handle('storage:cleanup-temp', async (_event, payload = {}) => {
+    const result = await storageHygieneService.cleanupOwnedTemp({
+      tempRoot: app.getPath('temp'),
+      olderThanHours: Number(payload.olderThanHours ?? 0)
+    });
+    return {
+      result,
+      status: await storageHygieneService.getStorageStatus({
+        electronSession: session.defaultSession,
+        tempRoot: app.getPath('temp')
+      })
+    };
+  });
+
+  ipcMain.handle('storage:clear-cache', async () => {
+    const result = await storageHygieneService.clearAppCache({
+      electronSession: session.defaultSession,
+      tempRoot: app.getPath('temp')
+    });
+    return {
+      result,
+      status: await storageHygieneService.getStorageStatus({
+        electronSession: session.defaultSession,
+        tempRoot: app.getPath('temp')
+      })
+    };
   });
 
   ipcMain.handle('engine:status', () => engineService.getStatus(settingsService));
@@ -242,9 +313,24 @@ function registerIpc() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   settingsService = new SettingsService(app.getPath('userData'));
   secureSecretsService = new SecureSecretsService(app.getPath('userData'));
+  storageHygieneService.configureSharpCache();
+
+  try {
+    const saved = await settingsService.read();
+    const storageSettings = normalizeStorageSettings(saved.storageHygiene || {});
+    if (storageSettings.autoCleanupTemp) {
+      await storageHygieneService.cleanupOwnedTemp({
+        tempRoot: app.getPath('temp'),
+        olderThanHours: storageSettings.tempRetentionHours
+      });
+    }
+  } catch (error) {
+    console.warn(`Startup temp cleanup skipped: ${error.message || error}`);
+  }
+
   registerIpc();
   createWindow();
 
