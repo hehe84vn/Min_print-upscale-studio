@@ -80,25 +80,82 @@ function cmykOutputPath(rgbPath, profileId) {
   return path.join(parsed.dir, `${parsed.name}-CMYK-${suffix}.tif`);
 }
 
+async function readCmykMetadata(filePath) {
+  const metadata = await sharp(filePath, { failOn: 'none' }).metadata();
+  return {
+    ...metadata,
+    valid: metadata.space === 'cmyk' && Number(metadata.channels) >= 4
+  };
+}
+
+function createCmykPipeline(inputPath, profilePath, attachProfile, dpi, compression, strategy) {
+  let pipeline = sharp(inputPath, { failOn: 'none' })
+    .rotate()
+    .pipelineColourspace('rgb16');
+
+  if (strategy === 'explicit-cmyk-first') {
+    pipeline = pipeline
+      .toColourspace('cmyk')
+      .withIccProfile(profilePath, { attach: attachProfile });
+  } else {
+    // withIccProfile performs the RGB -> destination-profile transform.
+    // Calling toColourspace after it can force Sharp back to a generic output space.
+    pipeline = pipeline.withIccProfile(profilePath, { attach: attachProfile });
+  }
+
+  return pipeline
+    .withMetadata({ density: Number(dpi) || 300 })
+    .tiff({ compression, predictor: 'horizontal' });
+}
+
+async function writeVerifiedCmyk({ inputPath, targetPath, profile, settings, dpi }) {
+  const temporaryPath = `${targetPath}.cmyk-${process.pid}-${Date.now()}.tif`;
+  const attempts = ['profile-transform', 'explicit-cmyk-first'];
+  const diagnostics = [];
+
+  try {
+    for (const strategy of attempts) {
+      await fs.rm(temporaryPath, { force: true });
+      try {
+        await createCmykPipeline(
+          inputPath,
+          profile.path,
+          settings.embedProfile,
+          dpi,
+          settings.compression,
+          strategy
+        ).toFile(temporaryPath);
+
+        const metadata = await readCmykMetadata(temporaryPath);
+        diagnostics.push({ strategy, space: metadata.space, channels: metadata.channels, hasProfile: metadata.hasProfile });
+        if (!metadata.valid) continue;
+
+        await fs.rm(targetPath, { force: true });
+        await fs.rename(temporaryPath, targetPath);
+        return { metadata, strategy };
+      } catch (error) {
+        diagnostics.push({ strategy, error: error.message || String(error) });
+      }
+    }
+  } finally {
+    await fs.rm(temporaryPath, { force: true });
+  }
+
+  throw new Error(`Chuyển CMYK không thành công sau 2 phương án ICC. Chi tiết: ${JSON.stringify(diagnostics)}`);
+}
+
 async function convertToCmyk({ inputPath, settings = {}, outputPath = null, dpi = 300 }) {
   if (!inputPath) throw new Error('Thiếu file RGB để chuyển CMYK.');
   const normalized = normalizeSettings(settings);
   const profile = await resolveProfile(normalized);
   const targetPath = outputPath || cmykOutputPath(inputPath, profile.id);
-
-  const result = await sharp(inputPath, { failOn: 'none' })
-    .rotate()
-    .withIccProfile(profile.path, { attach: normalized.embedProfile })
-    .toColourspace('cmyk')
-    .withMetadata({ density: Number(dpi) || 300 })
-    .tiff({ compression: normalized.compression, predictor: 'horizontal' })
-    .toFile(targetPath);
-
-  const metadata = await sharp(targetPath, { failOn: 'none' }).metadata();
-  if (metadata.space !== 'cmyk' || metadata.channels < 4) {
-    await fs.rm(targetPath, { force: true });
-    throw new Error('Chuyển CMYK không thành công: file kết quả không có 4 kênh CMYK.');
-  }
+  const conversion = await writeVerifiedCmyk({
+    inputPath,
+    targetPath,
+    profile,
+    settings: normalized,
+    dpi: Number(dpi) || 300
+  });
 
   let rgbMasterRemoved = false;
   if (normalized.outputMode === 'cmyk-only' && path.resolve(inputPath) !== path.resolve(targetPath)) {
@@ -111,16 +168,17 @@ async function convertToCmyk({ inputPath, settings = {}, outputPath = null, dpi 
     rgbMasterRemoved,
     profile,
     settings: normalized,
+    conversionStrategy: conversion.strategy,
     metadata: {
-      width: result.width,
-      height: result.height,
-      channels: metadata.channels,
-      space: metadata.space,
-      format: metadata.format,
-      density: metadata.density || dpi,
-      hasProfile: Boolean(metadata.hasProfile)
+      width: conversion.metadata.width,
+      height: conversion.metadata.height,
+      channels: conversion.metadata.channels,
+      space: conversion.metadata.space,
+      format: conversion.metadata.format,
+      density: conversion.metadata.density || dpi,
+      hasProfile: Boolean(conversion.metadata.hasProfile)
     },
-    note: 'ICC transform được thực hiện bằng libvips/Sharp. File vẫn cần designer kiểm tra TAC, separation, black, spot color, overprint và proof.'
+    note: 'ICC transform được thực hiện bằng libvips/Sharp và chỉ được chấp nhận khi TIFF đọc lại là CMYK từ 4 kênh trở lên. File vẫn cần designer kiểm tra TAC, separation, black, spot color, overprint và proof.'
   };
 }
 
@@ -144,5 +202,7 @@ module.exports = {
   convertToCmyk,
   getSettingsSummary,
   normalizeSettings,
-  resolveProfile
+  readCmykMetadata,
+  resolveProfile,
+  writeVerifiedCmyk
 };
