@@ -104,6 +104,16 @@
     advanced.before(card);
   }
 
+  function renameQualityCheck() {
+    const toggle = $('preflightEnabled')?.closest('label');
+    const label = toggle?.querySelector('span');
+    if (label) label.textContent = 'Upscale Quality Check';
+    const labNotice = document.querySelector('#benchmarkSettings .lab-notice');
+    if (labNotice) {
+      labNotice.innerHTML = '<b>Packaging Safe Pro · Upscale Quality Check</b><span>Kiểm tra lỗi do upscale trong RGB: QR/barcode, màu tương đối, hình học, text/logo, halo và mức phủ mask. Không thay thế preflight CMYK cuối.</span>';
+    }
+  }
+
   function syncJobVisibility() {
     if (!$('colorOutputJobCard')) return;
     $('colorOutputJobCard').hidden = ['vector-logo', 'model-lab'].includes(state.tool);
@@ -172,8 +182,7 @@
         outputMode,
         profileId,
         customProfilePath: colorState.customProfilePath
-      },
-      removeRgbAfter: outputMode === 'cmyk-only'
+      }
     });
   }
 
@@ -204,6 +213,7 @@
   installStyles();
   installJobControls();
   installSettingsControls();
+  renameQualityCheck();
   document.title = 'Print Upscale Studio V2.5 Color Output';
   const brandVersion = document.querySelector('.brand span');
   if (brandVersion) brandVersion.textContent = 'Studio V2.5 · Color Output';
