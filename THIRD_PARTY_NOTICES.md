@@ -16,6 +16,26 @@ The installer includes the corresponding license text and source/credit links in
 the bundled runtime directory. Print Upscale Studio is not an official Upscayl
 product.
 
+## AutoTrace color candidate runtime
+
+V2.9.2 can invoke the upstream AutoTrace command-line program as an external
+candidate engine for flat-color artwork. AutoTrace is not reimplemented in this
+repository.
+
+- Upstream: https://github.com/autotrace/autotrace
+- AutoTrace program: GPL-2.0-or-later
+- `libautotrace`: LGPL-2.1-or-later
+
+Windows x64 builds may include an official upstream AutoTrace executable and its
+runtime files under `autotrace-runtime`. macOS builds detect a verified Homebrew,
+MacPorts or other system AutoTrace installation; when no compatible executable
+is available, the app keeps the VTracer result and records the fallback reason in
+`vector-report.json`.
+
+The current application is used personally and internally. Reassess GPL and
+runtime-distribution obligations before providing installers to external users.
+Print Upscale Studio is not an official AutoTrace product.
+
 ## Real-ESRGAN experimental benchmark model weight
 
 Model Lab bundles the official NCNN `realesrgan-x4plus` model weight from the
@@ -61,6 +81,8 @@ specifications, separation checks, TAC checks or contract proofing.
 - `@zxing/library`: Apache-2.0
 - `@neplex/vectorizer`: MIT, Node.js bindings based on VTracer
 - VTracer: MIT
+- Potrace Node runtime: GPL-2.0
+- AutoTrace executable: GPL-2.0-or-later
 
 Before commercial distribution, perform a full dependency, profile-distribution
 and model-weight license audit. This notice is not legal advice.
