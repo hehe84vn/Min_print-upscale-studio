@@ -6,13 +6,18 @@ import path from 'node:path';
 import sharp from 'sharp';
 import runtimeModule from '../src/main/services/autotraceRuntimeService.js';
 
-const { probeAutoTrace } = runtimeModule;
+const {
+  autoTraceEnvironment,
+  manifestExecutable,
+  probeAutoTrace,
+  readRuntimeManifest
+} = runtimeModule;
 const target = `${process.platform}-${process.arch}`;
 const repositoryRoot = path.resolve(import.meta.dirname, '..');
 const runtimeRoot = path.join(repositoryRoot, 'vendor', 'autotrace', target);
 const manifestPath = path.join(runtimeRoot, 'runtime.json');
 const diagnosticsPath = path.join(repositoryRoot, 'runtime-smoke-diagnostics.json');
-const executable = path.join(runtimeRoot, 'bin', process.platform === 'win32' ? 'autotrace.exe' : 'autotrace');
+let executable = path.join(runtimeRoot, 'bin', process.platform === 'win32' ? 'autotrace.exe' : 'autotrace');
 let stage = 'initialize';
 let manifest = null;
 let versionOutput = '';
@@ -58,7 +63,7 @@ function cleanEnvironment(homeDirectory) {
     MAGICK_CONFIGURE_PATH: ''
   };
   if (process.platform === 'darwin') env.PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
-  return env;
+  return autoTraceEnvironment(executable, env);
 }
 
 async function writeDiagnostics(status, extra = {}) {
@@ -100,10 +105,12 @@ async function main() {
 
   stage = 'read-manifest';
   assert.equal(await exists(manifestPath), true, `Missing runtime manifest for ${target}`);
-  assert.equal(await exists(executable), true, `Missing bundled AutoTrace executable for ${target}`);
-  manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  manifest = readRuntimeManifest(runtimeRoot);
+  assert.ok(manifest, `Unreadable runtime manifest for ${target}`);
   assert.equal(manifest.target, target);
   assert.equal(manifest.bundled, true, `${target} runtime must be bundled`);
+  executable = manifestExecutable(runtimeRoot, process.platform);
+  assert.equal(await exists(executable), true, `Missing bundled AutoTrace executable for ${target}: ${executable}`);
 
   if (process.platform === 'darwin') {
     stage = 'inspect-mach-o-dependencies';
@@ -134,7 +141,7 @@ async function main() {
   try {
     const env = cleanEnvironment(workspace);
     stage = 'production-runtime-probe';
-    runtimeProbe = probeAutoTrace(executable, { timeout: 15000 });
+    runtimeProbe = probeAutoTrace(executable, { timeout: 15000, env });
     versionOutput = runtimeProbe.output || '';
     assert.equal(runtimeProbe.available, true, `Production runtime probe failed: ${JSON.stringify(runtimeProbe.attempts)}`);
 
@@ -150,7 +157,7 @@ async function main() {
       '-background-color', 'FFFFFF',
       '-despeckle-level', '0',
       inputPath
-    ], { env });
+    ], { cwd: path.dirname(executable), env });
     const svg = await fs.readFile(outputPath, 'utf8');
     stage = 'validate-svg-output';
     assert.match(svg, /<svg\b/i);
