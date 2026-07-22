@@ -16,6 +16,11 @@ const {
   createSemanticTextLogoMask,
   protectedBlend
 } = require('../src/main/services/packagingProtectionService');
+const {
+  PREFLIGHT_VERSION,
+  createPreflightContext,
+  runPackagingPreflight
+} = require('../src/main/services/preflightService');
 
 const sourceSvg = Buffer.from(`
   <svg width="96" height="72" xmlns="http://www.w3.org/2000/svg">
@@ -151,6 +156,25 @@ try {
     throw new Error('Refined semantic protected blend did not produce a valid result.');
   }
   console.log(`Mask refinement ${MASK_REFINEMENT_VERSION} OK: ${blend.protection.coveragePercent}% combined coverage`);
+
+  const preflightContext = await createPreflightContext(inputPath, 320);
+  const preflight = await runPackagingPreflight({
+    context: preflightContext,
+    outputPath: protectedOutputPath,
+    semanticMaskPath,
+    protection: blend.protection
+  });
+  if (
+    preflight.version !== PREFLIGHT_VERSION
+    || !['pass', 'warning'].includes(preflight.status)
+    || !Number.isFinite(preflight.score)
+    || !preflight.metrics?.color
+    || !preflight.metrics?.geometry
+    || !preflight.metrics?.halo
+  ) {
+    throw new Error(`Packaging Preflight returned an invalid result: ${JSON.stringify(preflight)}`);
+  }
+  console.log(`Packaging Preflight OK: ${preflight.status.toUpperCase()} ${preflight.score}/100`);
 
   const barcodePath = path.join(workspace, 'invalid-barcode-artwork.png');
   await sharp(invalidBarcodeArtwork()).png().toFile(barcodePath);
