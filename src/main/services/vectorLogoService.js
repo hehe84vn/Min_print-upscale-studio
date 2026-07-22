@@ -136,33 +136,39 @@ function applyConservativeInputPolicy(inputQuality) {
   const stroke = Number(metrics.stroke?.minimumStrokePx || 0);
   const coverage = Number(metrics.foregroundCoveragePercent || 0);
 
+  // Size is a review signal, not proof that geometry is unrecoverable. A small,
+  // high-contrast and crisp logo can still trace reliably with Potrace.
+  const sizeRisk = longest > 0 && longest < 180;
+  const destructiveSignals = {
+    lowContrast: contrast > 0 && contrast < 48,
+    heavyBlur: sharpness < 20 && transition > 5.5,
+    weakStroke: stroke > 0 && stroke < 1.8,
+    missingForeground: coverage < 0.12
+  };
+
   const catastrophic = [];
-  if (longest > 0 && longest < 120) catastrophic.push('logo-extremely-small');
-  if (contrast > 0 && contrast < 32) catastrophic.push('contrast-collapsed');
-  if (sharpness < 12 && transition > 6.2) catastrophic.push('severe-blur');
-  if (stroke > 0 && stroke < 1.25) catastrophic.push('stroke-unrecoverable');
-  if (coverage < 0.06) catastrophic.push('foreground-not-detected');
+  if (contrast > 0 && contrast < 20) catastrophic.push('contrast-collapsed');
+  if (sharpness < 8 && transition > 8) catastrophic.push('severe-blur');
+  if (stroke > 0 && stroke < 0.75) catastrophic.push('stroke-unrecoverable');
+  if (coverage < 0.02) catastrophic.push('foreground-not-detected');
 
-  const severeSignals = [
-    longest > 0 && longest < 180,
-    contrast > 0 && contrast < 48,
-    sharpness < 20,
-    transition > 5.5,
-    stroke > 0 && stroke < 1.8,
-    coverage < 0.12
-  ].filter(Boolean).length;
-
-  if (catastrophic.length || severeSignals >= 2) {
+  const severeSignalCount = Object.values(destructiveSignals).filter(Boolean).length;
+  if (catastrophic.length || severeSignalCount >= 2) {
     gate.policy = 'conservative-reject';
     gate.catastrophicSignals = catastrophic;
-    gate.severeSignalCount = severeSignals;
+    gate.severeSignalCount = severeSignalCount;
+    gate.sizeRisk = sizeRisk;
     return inputQuality;
   }
 
   gate.status = 'review';
   gate.policy = 'downgraded-to-review';
+  gate.sizeRisk = sizeRisk;
+  gate.catastrophicSignals = [];
+  gate.severeSignalCount = severeSignalCount;
   gate.warnings = [
     ...(gate.reasons || []).map((reason) => `Ảnh yếu nhưng vẫn cho phép thử trace: ${reason}`),
+    ...(sizeRisk ? [`Vùng logo chỉ dài ${Math.round(longest)}px; sẽ trace ở chế độ REVIEW thay vì chặn.`] : []),
     ...(gate.warnings || [])
   ];
   gate.reasons = [];
