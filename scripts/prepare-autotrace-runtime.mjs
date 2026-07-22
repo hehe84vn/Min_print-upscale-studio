@@ -16,6 +16,8 @@ const target = `${platform}-${arch}`;
 const repositoryRoot = path.resolve(import.meta.dirname, '..');
 const targetRoot = path.join(repositoryRoot, 'vendor', 'autotrace', target);
 const binDirectory = path.join(targetRoot, 'bin');
+const executableName = platform === 'win32' ? 'autotrace.exe' : 'autotrace';
+const preparedExecutable = path.join(binDirectory, executableName);
 
 async function exists(filePath) {
   try {
@@ -59,7 +61,26 @@ async function findFiles(directory, predicate, output = []) {
   return output;
 }
 
+async function copyLicenseFiles(extracted) {
+  const licenseFiles = await findFiles(extracted, (filePath) => /(?:copying|license)(?:\.[^.]+)?$/i.test(path.basename(filePath)));
+  const copied = new Set();
+  for (const licensePath of licenseFiles) {
+    const name = path.basename(licensePath);
+    if (copied.has(name.toLowerCase())) continue;
+    copied.add(name.toLowerCase());
+    await fs.copyFile(licensePath, path.join(targetRoot, name));
+  }
+  if (!copied.size) {
+    await download(
+      `https://raw.githubusercontent.com/autotrace/autotrace/${VERSION}/COPYING`,
+      path.join(targetRoot, 'COPYING')
+    );
+  }
+}
+
 async function prepareWindowsRuntime() {
+  if (await exists(preparedExecutable)) return preparedExecutable;
+
   const releaseResponse = await fetch(`https://api.github.com/repos/autotrace/autotrace/releases/tags/${VERSION}`, {
     headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Print-Upscale-Studio-AutoTrace-Runtime' }
   });
@@ -81,7 +102,7 @@ async function prepareWindowsRuntime() {
   const dlls = await findFiles(extracted, (filePath) => filePath.toLowerCase().endsWith('.dll'));
   await fs.rm(targetRoot, { recursive: true, force: true });
   await fs.mkdir(binDirectory, { recursive: true });
-  await fs.copyFile(executable, path.join(binDirectory, 'autotrace.exe'));
+  await fs.copyFile(executable, preparedExecutable);
   const copied = new Set();
   for (const dll of dlls) {
     const name = path.basename(dll);
@@ -89,8 +110,9 @@ async function prepareWindowsRuntime() {
     copied.add(name.toLowerCase());
     await fs.copyFile(dll, path.join(binDirectory, name));
   }
+  await copyLicenseFiles(extracted);
   await fs.rm(workspace, { recursive: true, force: true });
-  return path.join(binDirectory, 'autotrace.exe');
+  return preparedExecutable;
 }
 
 async function prepareSystemRuntime() {
@@ -98,8 +120,8 @@ async function prepareSystemRuntime() {
   const binary = explicit && await exists(explicit) ? explicit : commandPath('autotrace');
   await fs.mkdir(targetRoot, { recursive: true });
   if (!binary) return null;
-  // macOS Homebrew binaries have dynamic dependencies. V2.9.2 records the
-  // verified system runtime instead of copying an incomplete executable.
+  // Homebrew binaries have dynamic dependencies. V2.9.2 records the verified
+  // system runtime instead of copying a non-portable executable without dylibs.
   return binary;
 }
 
