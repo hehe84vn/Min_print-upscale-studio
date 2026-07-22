@@ -7,12 +7,14 @@ import vectorModule from '../src/main/services/vectorLogoService.js';
 
 const { vectorizeLogo, inspectSvgComplexity, selectedCandidateKeys, safeBackgroundCleanup } = vectorModule;
 const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'vector-logo-smoke-'));
-const inputPath = path.join(workspace, 'logo-source.png');
+const colorInputPath = path.join(workspace, 'color-logo-source.png');
 const cleanedPath = path.join(workspace, 'logo-cleaned.png');
-const outputPath = path.join(workspace, 'logo-vector.svg');
+const colorOutputPath = path.join(workspace, 'color-logo-vector.svg');
+const monoInputPath = path.join(workspace, 'mono-logo-source.jpg');
+const monoOutputPath = path.join(workspace, 'mono-logo-vector.svg');
 
 try {
-  const artwork = Buffer.from(`
+  const colorArtwork = Buffer.from(`
     <svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420">
       <rect width="640" height="420" fill="#fff"/>
       <path d="M90 210C90 120 155 62 244 62h148c89 0 158 59 158 148s-69 148-158 148H244C155 358 90 300 90 210Z" fill="#1f6b3a"/>
@@ -21,18 +23,18 @@ try {
       <path d="M336 154h118v24H336zm0 44h92v24h-92zm0 44h105v24H336z" fill="#fff"/>
     </svg>
   `);
-  await sharp(artwork).png().toFile(inputPath);
+  await sharp(colorArtwork).png().toFile(colorInputPath);
 
-  const cleanup = await safeBackgroundCleanup(inputPath, cleanedPath);
+  const cleanup = await safeBackgroundCleanup(colorInputPath, cleanedPath);
   const cleaned = await sharp(cleanedPath).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const alphaAt = (x, y) => cleaned.data[(y * cleaned.info.width + x) * cleaned.info.channels + 3];
   assert.equal(cleanup.applied, true);
   assert.equal(alphaAt(0, 0), 0, 'border background must become transparent');
   assert.ok(alphaAt(350, 165) >= 240, 'internal white logo detail must remain opaque');
 
-  const result = await vectorizeLogo({
-    inputPath,
-    outputPath,
+  const colorResult = await vectorizeLogo({
+    inputPath: colorInputPath,
+    outputPath: colorOutputPath,
     options: {
       strategy: 'smart',
       colorMode: 'color',
@@ -40,22 +42,58 @@ try {
       turdSize: 1
     }
   });
-
-  const svg = await fs.readFile(result.outputPath, 'utf8');
-  const report = JSON.parse(await fs.readFile(result.reportPath, 'utf8'));
-  const complexity = inspectSvgComplexity(svg);
-
-  assert.match(svg, /<svg\b/i);
-  assert.equal(report.schemaVersion, 2);
-  assert.equal(report.backgroundCleanup.applied, true);
+  const colorSvg = await fs.readFile(colorResult.outputPath, 'utf8');
+  const colorReport = JSON.parse(await fs.readFile(colorResult.reportPath, 'utf8'));
+  const colorComplexity = inspectSvgComplexity(colorSvg);
+  assert.match(colorSvg, /<svg\b/i);
+  assert.equal(colorReport.schemaVersion, 3);
+  assert.equal(colorReport.backgroundCleanup.applied, true);
   assert.ok(selectedCandidateKeys('smart').length >= 3);
-  assert.ok(report.candidates.length >= 2);
-  assert.ok(report.selectedCandidate);
-  assert.ok(Number.isFinite(report.selectedScore));
-  assert.ok(complexity.shapeCount > 0);
-  assert.ok(complexity.nodeEstimate > 0);
+  assert.ok(colorReport.candidates.length >= 2);
+  assert.ok(colorReport.selectedCandidate);
+  assert.ok(Number.isFinite(colorReport.selectedScore));
+  assert.ok(colorComplexity.shapeCount > 0);
+  assert.ok(colorComplexity.nodeEstimate > 0);
 
-  console.log(`Smart Vector OK: ${report.selectedCandidate}, score ${report.selectedScore}, ${complexity.nodeEstimate} nodes.`);
+  const monoArtwork = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="900" height="420" viewBox="0 0 900 420">
+      <rect width="900" height="420" fill="#fff"/>
+      <path d="M70 70H250V115H125V185H235V230H125V350H70Z" fill="#000"/>
+      <path d="M320 70H380L455 350H398L382 284H318L302 350H245Zm30 70-22 100h44Z" fill="#000"/>
+      <path d="M505 70H565V305H690V350H505Z" fill="#000"/>
+      <path d="M730 70H790V350H730Z" fill="#000"/>
+    </svg>
+  `);
+  await sharp(monoArtwork).jpeg({ quality: 84, chromaSubsampling: '4:4:4' }).toFile(monoInputPath);
+
+  const monoResult = await vectorizeLogo({
+    inputPath: monoInputPath,
+    outputPath: monoOutputPath,
+    options: {
+      strategy: 'smart',
+      colorMode: 'color',
+      backgroundCleanup: true,
+      geometryLock: true,
+      turdSize: 1
+    }
+  });
+  const monoSvg = await fs.readFile(monoResult.outputPath, 'utf8');
+  const monoReport = JSON.parse(await fs.readFile(monoResult.reportPath, 'utf8'));
+  const selected = monoReport.candidates.find((candidate) => candidate.id === monoReport.selectedCandidate);
+  assert.equal(monoReport.schemaVersion, 3);
+  assert.equal(monoReport.autoMonochrome, true);
+  assert.equal(monoReport.effectiveColorMode, 'binary');
+  assert.equal(monoReport.source.traceScale, 1, 'monochrome logo must not be enlarged before threshold and trace');
+  assert.equal(monoReport.geometryLockEnabled, true);
+  assert.ok(monoReport.candidates.some((candidate) => candidate.id === 'geometry-lock'));
+  assert.ok(selected);
+  assert.ok(Number.isFinite(selected.metrics.cornerPreservation));
+  assert.ok(Number.isFinite(selected.metrics.straightnessScore));
+  assert.ok(selected.metrics.colorCount <= 2, 'monochrome result must not contain grayscale color layers');
+  assert.match(monoSvg, /viewBox="0 0 900 420"/);
+
+  console.log(`Smart Vector color OK: ${colorReport.selectedCandidate}, ${colorComplexity.nodeEstimate} nodes.`);
+  console.log(`Geometry Lock mono OK: ${monoReport.selectedCandidate}, corner ${selected.metrics.cornerPreservation}, ${selected.metrics.colorCount} colors.`);
 } finally {
   await fs.rm(workspace, { recursive: true, force: true });
 }
