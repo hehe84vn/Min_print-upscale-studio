@@ -125,7 +125,7 @@ async function vectorizeLogo(payload) {
     const cleanup = await safeBackgroundCleanup(payload.inputPath, cleanedInput);
     const result = await engine.vectorizeLogo({
       ...payload,
-      inputPath: cleanedInput,
+      inputPath: cleanup.applied ? cleanedInput : payload.inputPath,
       options: { ...options, backgroundCleanup: false }
     });
     result.vectorReport.inputPath = payload.inputPath;
