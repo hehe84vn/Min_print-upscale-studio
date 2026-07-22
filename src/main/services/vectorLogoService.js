@@ -120,6 +120,55 @@ async function safeBackgroundCleanup(inputPath, outputPath) {
   };
 }
 
+function applyConservativeInputPolicy(inputQuality) {
+  const gate = inputQuality?.gate;
+  if (!gate || gate.status !== 'reject') return inputQuality;
+
+  const metrics = inputQuality.metrics || inputQuality;
+  const longest = Math.max(
+    Number(metrics.logoBounds?.width || 0),
+    Number(metrics.logoBounds?.height || 0)
+  );
+  const contrast = Number(metrics.contrastRange || 0);
+  const sharpness = Number(metrics.edge?.sharpnessScore || 0);
+  const transition = Number(metrics.edge?.transitionWidthPx || 99);
+  const stroke = Number(metrics.stroke?.minimumStrokePx || 0);
+  const coverage = Number(metrics.foregroundCoveragePercent || 0);
+
+  const catastrophic = [];
+  if (longest > 0 && longest < 120) catastrophic.push('logo-extremely-small');
+  if (contrast > 0 && contrast < 32) catastrophic.push('contrast-collapsed');
+  if (sharpness < 12 && transition > 6.2) catastrophic.push('severe-blur');
+  if (stroke > 0 && stroke < 1.25) catastrophic.push('stroke-unrecoverable');
+  if (coverage < 0.06) catastrophic.push('foreground-not-detected');
+
+  const severeSignals = [
+    longest > 0 && longest < 180,
+    contrast > 0 && contrast < 48,
+    sharpness < 20,
+    transition > 5.5,
+    stroke > 0 && stroke < 1.8,
+    coverage < 0.12
+  ].filter(Boolean).length;
+
+  if (catastrophic.length || severeSignals >= 2) {
+    gate.policy = 'conservative-reject';
+    gate.catastrophicSignals = catastrophic;
+    gate.severeSignalCount = severeSignals;
+    return inputQuality;
+  }
+
+  gate.status = 'review';
+  gate.policy = 'downgraded-to-review';
+  gate.warnings = [
+    ...(gate.reasons || []).map((reason) => `Ảnh yếu nhưng vẫn cho phép thử trace: ${reason}`),
+    ...(gate.warnings || [])
+  ];
+  gate.reasons = [];
+  gate.score = Math.max(Number(gate.score || 0), 50);
+  return inputQuality;
+}
+
 async function attachInputQuality(result, inputPath, inputQuality, backgroundCleanup = null) {
   result.vectorReport.inputPath = inputPath;
   result.vectorReport.inputQuality = inputQuality;
@@ -138,7 +187,7 @@ async function attachInputQuality(result, inputPath, inputQuality, backgroundCle
 async function vectorizeLogo(payload) {
   const options = payload.options || {};
   payload.onProgress?.(2, 'Đang kiểm tra chất lượng ảnh đầu vào');
-  const inputQuality = await analyzeVectorInput(payload.inputPath);
+  const inputQuality = applyConservativeInputPolicy(await analyzeVectorInput(payload.inputPath));
   if (inputQuality.gate.status === 'reject') {
     const error = new Error(formatVectorInputRejection(inputQuality));
     error.code = 'VECTOR_INPUT_REJECTED';
@@ -179,6 +228,7 @@ async function vectorizeLogo(payload) {
 module.exports = {
   ...engine,
   analyzeVectorInput,
+  applyConservativeInputPolicy,
   clearConnectedBorder,
   detectBorderBackground,
   safeBackgroundCleanup,
