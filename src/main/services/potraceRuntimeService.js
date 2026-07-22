@@ -3,10 +3,15 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SUPPORTED_TARGETS = new Set([
+const DISTRIBUTION_TARGETS = new Set([
   'darwin-arm64',
   'darwin-x64',
   'win32-x64'
+]);
+
+const SUPPORTED_TARGETS = new Set([
+  ...DISTRIBUTION_TARGETS,
+  'linux-x64'
 ]);
 
 function currentTarget(platform = process.platform, arch = process.arch) {
@@ -24,6 +29,7 @@ function readPackageMetadata(packageJsonPath) {
 function detectPotraceRuntime({ platform = process.platform, arch = process.arch } = {}) {
   const target = currentTarget(platform, arch);
   const supportedTarget = SUPPORTED_TARGETS.has(target);
+  const distributionTarget = DISTRIBUTION_TARGETS.has(target);
   let modulePath = null;
   let packageJsonPath = null;
   let metadata = null;
@@ -46,6 +52,7 @@ function detectPotraceRuntime({ platform = process.platform, arch = process.arch
     platform,
     arch,
     supportedTarget,
+    distributionTarget,
     available,
     binaryRequired: false,
     modulePath,
@@ -74,6 +81,7 @@ function requirePotraceRuntime(options = {}) {
 }
 
 module.exports = {
+  DISTRIBUTION_TARGETS,
   SUPPORTED_TARGETS,
   currentTarget,
   detectPotraceRuntime,
