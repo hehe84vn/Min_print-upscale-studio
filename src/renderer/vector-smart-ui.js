@@ -25,7 +25,7 @@
     const notice = settings.querySelector('.notice');
     if (notice) {
       notice.classList.add('smart-vector-notice');
-      notice.innerHTML = '<b>Smart Multi-Pass Vector</b><span class="smart-vector-badge">BINARY RECONSTRUCTION</span><br>Dựng contour trực tiếp từ mask đen trắng và kiểm tra từng component nhỏ trước khi PASS.';
+      notice.innerHTML = '<b>Smart Vector</b><span class="smart-vector-badge">INPUT QUALITY GATE</span><br>Ảnh quá mờ, quá nhỏ hoặc mất dữ liệu hình học sẽ bị chặn trước khi chạy engine trace.';
     }
 
     const colorMode = get('colorMode');
@@ -73,12 +73,12 @@
 
     const reconstruction = document.createElement('label');
     reconstruction.className = 'check-row binary-reconstruction-row';
-    reconstruction.innerHTML = '<input id="vectorBinaryReconstruction" type="checkbox" checked><span>Binary Shape Reconstruction: dựng contour trực tiếp, giữ dấu nhỏ, lòng chữ và đầu nét</span>';
+    reconstruction.innerHTML = '<input id="vectorBinaryReconstruction" type="checkbox" checked><span>Hybrid Contour Reconstruction: polygon cho cạnh thẳng, Bézier cho contour cong</span>';
     geometryLock.insertAdjacentElement('afterend', reconstruction);
 
     const hint = document.createElement('p');
     hint.className = 'smart-vector-hint';
-    hint.textContent = 'Logo đơn sắc được threshold ở kích thước gốc. Quality Gate chấm từng component để lỗi nhỏ không bị điểm tổng thể che lấp.';
+    hint.textContent = 'Input Quality Gate đo vùng logo thực, độ nét cạnh, transition width, nét nhỏ nhất, tương phản và JPEG artifact trước khi trace.';
     reconstruction.insertAdjacentElement('afterend', hint);
 
     const turd = get('turdSize');
@@ -142,6 +142,8 @@
     const lock = selected.geometryLock || {};
     const reconstruction = selected.reconstruction || {};
     const component = metrics.componentValidation || {};
+    const input = report.inputQuality || {};
+    const inputGate = input.gate || {};
     const mode = selected.label || report.selectedCandidate;
     const sourceMode = report.autoMonochrome
       ? `Tự nhận diện đơn sắc ${report.source?.analysis?.confidence ?? '—'}%`
@@ -149,6 +151,9 @@
         ? 'Đơn sắc'
         : 'Màu';
     const reportPath = payload.reportPath ? `\nBáo cáo: ${payload.reportPath}` : '';
+    const inputLine = inputGate.status
+      ? `Input ${String(inputGate.status).toUpperCase()} ${inputGate.score}/100 · logo ${input.logoBounds?.width ?? '—'}×${input.logoBounds?.height ?? '—'} px · sharp ${input.edge?.sharpnessScore ?? '—'} · stroke ${input.stroke?.minimumStrokePx ?? '—'} px`
+      : null;
     const geometryLine = report.effectiveColorMode === 'binary'
       ? `Corner ${metrics.cornerPreservation ?? '—'}% · Straight ${metrics.straightnessScore ?? '—'}% · Axis ${metrics.axisAgreement ?? '—'}%`
       : `Fidelity ${metrics.fidelity ?? '—'}% · Edge ${metrics.edgeAgreement ?? '—'}%`;
@@ -159,11 +164,12 @@
       ? `Geometry Lock: ${lock.curvesConvertedToLines ?? 0} curve→line · ${lock.axisSnaps ?? 0} snap · bỏ ${lock.collinearNodesRemoved ?? 0} node thẳng hàng`
       : null;
     const reconstructionLine = selected.reconstruction
-      ? `Reconstruction: ${reconstruction.loopCount ?? 0} contour · giảm node ${reconstruction.nodeReductionPercent ?? 0}% · ${reconstruction.horizontalSnaps ?? 0} H / ${reconstruction.verticalSnaps ?? 0} V snap`
+      ? `Reconstruction: ${reconstruction.loopCount ?? 0} contour · giảm node ${reconstruction.nodeReductionPercent ?? 0}% · polygon ${reconstruction.polygonLoops ?? reconstruction.rectilinearLoops ?? 0} · curve ${reconstruction.curveLoops ?? 0}`
       : null;
     const quality = report.qualityGate?.status === 'pass' ? 'PASS' : 'REVIEW';
     return [
       `Đã lưu SVG: ${outputPath}`,
+      inputLine,
       `${quality} · ${mode} · điểm ${report.selectedScore}/100 · ${sourceMode}`,
       `Fidelity ${metrics.fidelity ?? '—'}% · Edge ${metrics.edgeAgreement ?? '—'}%`,
       geometryLine,
@@ -189,7 +195,7 @@
       get('progressWrap').hidden = false;
       get('resultBox').hidden = true;
       get('progressBar').style.width = '1%';
-      get('progressText').textContent = 'Đang phân tách component và dựng contour nhị phân...';
+      get('progressText').textContent = 'Đang kiểm tra độ nét, kích thước logo và JPEG artifact...';
 
       const response = await window.studio.process({
         operation: 'vector-logo',
@@ -217,6 +223,7 @@
     } catch (error) {
       const resultBox = get('resultBox');
       resultBox.classList.add('error');
+      resultBox.classList.add('vector-result-lines');
       resultBox.textContent = error.message || String(error);
       resultBox.hidden = false;
     } finally {
@@ -228,10 +235,10 @@
   function syncVectorBrand(event) {
     const button = event.target.closest('.nav-item');
     if (!button || button.dataset.tool !== 'vector-logo') return;
-    document.title = 'Print Upscale Studio V2.8.2 Binary Reconstruction';
+    document.title = 'Print Upscale Studio V2.8.4 Input Quality Gate';
     const brandVersion = document.querySelector('.brand span');
-    if (brandVersion) brandVersion.textContent = 'Studio V2.8.2 · Binary Reconstruction';
-    get('toolDescription').textContent = 'Direct binary contours, local component validation, Geometry Lock và corner scoring.';
+    if (brandVersion) brandVersion.textContent = 'Studio V2.8.4 · Input Quality Gate';
+    get('toolDescription').textContent = 'Chặn ảnh quá mờ trước trace; sau đó mới chạy Smart Vector candidates.';
   }
 
   installStyles();
