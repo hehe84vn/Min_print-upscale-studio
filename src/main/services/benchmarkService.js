@@ -5,6 +5,7 @@ const sharp = require('sharp');
 const { runNcnnUpscale } = require('./engineService');
 const { flatBlend, protectedBlend } = require('./packagingProtectionService');
 const { createPreflightContext, runPackagingPreflight } = require('./preflightService');
+const { convertToCmyk, normalizeSettings: normalizeColorSettings } = require('./colorOutputService');
 
 const BENCHMARK_PRESETS = [
   {
@@ -30,8 +31,8 @@ const BENCHMARK_PRESETS = [
   },
   {
     id: 'packaging-hybrid',
-    label: 'Packaging Hybrid · Preflight',
-    description: 'Trộn High Fidelity với RealESRGAN Detail, bảo vệ chữ/logo và tự kiểm tra an toàn bao bì.',
+    label: 'Packaging Hybrid · Quality Check',
+    description: 'Trộn High Fidelity với RealESRGAN Detail, bảo vệ chữ/logo và kiểm tra lỗi do upscale.',
     type: 'blend',
     baseModel: 'high-fidelity-4x',
     detailModel: 'realesrgan-x4plus'
@@ -87,6 +88,7 @@ async function imageSummary(filePath) {
     colorSpace: metadata.space || 'unknown',
     channels: metadata.channels || null,
     density: metadata.density || null,
+    hasProfile: Boolean(metadata.hasProfile),
     sizeBytes: stat.size
   };
 }
@@ -98,7 +100,7 @@ async function copyAsPng(sourcePath, outputPath, dpi) {
     .toFile(outputPath);
 }
 
-async function safePreflight({ context, outputPath, semanticMaskPath, protection }) {
+async function safeQualityCheck({ context, outputPath, semanticMaskPath, protection }) {
   if (!context) return null;
   try {
     return await runPackagingPreflight({ context, outputPath, semanticMaskPath, protection });
@@ -109,7 +111,27 @@ async function safePreflight({ context, outputPath, semanticMaskPath, protection
       score: null,
       error: error.message || String(error),
       metrics: {},
-      recommendations: ['Preflight gặp lỗi kỹ thuật; cần kiểm tra thủ công kết quả này.']
+      recommendations: ['Upscale Quality Check gặp lỗi kỹ thuật; cần kiểm tra thủ công kết quả này.']
+    };
+  }
+}
+
+async function safeCmykCopy({ outputPath, dpi, enabled, settings }) {
+  if (!enabled) return null;
+  try {
+    return await convertToCmyk({
+      inputPath: outputPath,
+      dpi,
+      settings: normalizeColorSettings({
+        ...(settings || {}),
+        outputMode: 'rgb-cmyk'
+      })
+    });
+  } catch (error) {
+    return {
+      outputPath: null,
+      error: error.message || String(error),
+      settings: normalizeColorSettings({ ...(settings || {}), outputMode: 'rgb-cmyk' })
     };
   }
 }
@@ -128,6 +150,8 @@ async function runBenchmark({
   semanticProtectionEnabled = true,
   codeGuardEnabled = true,
   preflightEnabled = true,
+  cmykOutputEnabled = false,
+  colorOutputSettings = null,
   onProgress
 }) {
   if (!inputPath) throw new Error('Chưa chọn ảnh nguồn cho Model Lab.');
@@ -152,8 +176,8 @@ async function runBenchmark({
   const results = [];
 
   await fs.mkdir(sessionDirectory, { recursive: true });
-  onProgress?.(2, preflightEnabled ? 'Đang phân tích ảnh nguồn cho Packaging Preflight' : 'Đang chuẩn bị Model Lab');
-  const preflightContext = preflightEnabled ? await createPreflightContext(inputPath) : null;
+  onProgress?.(2, preflightEnabled ? 'Đang phân tích ảnh nguồn cho Upscale Quality Check' : 'Đang chuẩn bị Model Lab');
+  const qualityCheckContext = preflightEnabled ? await createPreflightContext(inputPath) : null;
 
   const runModel = async (model, progress) => {
     if (modelCache.has(model)) return modelCache.get(model);
@@ -200,7 +224,7 @@ async function runBenchmark({
             ? path.join(sessionDirectory, `${prefix}_barcode-mask.png`)
             : null;
           progress(
-            91,
+            89,
             protectionEnabled
               ? 'đang tạo refined mask và kiểm tra QR/barcode'
               : 'đang trộn toàn ảnh'
@@ -232,12 +256,20 @@ async function runBenchmark({
           await copyAsPng(modelOutput, outputPath, safeDpi);
         }
 
-        progress(97, preflightEnabled ? 'đang chạy Packaging Preflight' : 'đang hoàn tất');
-        const preflight = await safePreflight({
-          context: preflightContext,
+        progress(94, preflightEnabled ? 'đang chạy Upscale Quality Check' : 'đang hoàn tất RGB');
+        const preflight = await safeQualityCheck({
+          context: qualityCheckContext,
           outputPath,
           semanticMaskPath,
           protection: blendInfo?.protection || null
+        });
+
+        progress(98, cmykOutputEnabled ? 'đang tạo CMYK TIFF copy' : 'đang hoàn tất');
+        const cmykOutput = await safeCmykCopy({
+          outputPath,
+          dpi: safeDpi,
+          enabled: Boolean(cmykOutputEnabled),
+          settings: colorOutputSettings
         });
 
         results.push({
@@ -251,6 +283,7 @@ async function runBenchmark({
           barcodeGuard: blendInfo?.barcodeGuard || null,
           blendStrength: blendInfo?.strength || null,
           preflight,
+          cmykOutput,
           error: null
         });
       } catch (error) {
@@ -265,37 +298,46 @@ async function runBenchmark({
           barcodeGuard: null,
           blendStrength: null,
           preflight: null,
+          cmykOutput: null,
           error: error.message || String(error)
         });
       }
     }
 
-    const preflightSummary = {
+    const qualityCheckSummary = {
       enabled: Boolean(preflightEnabled),
       pass: results.filter((result) => result.preflight?.status === 'pass').length,
       warning: results.filter((result) => result.preflight?.status === 'warning').length,
       fail: results.filter((result) => result.preflight?.status === 'fail').length,
       skipped: results.filter((result) => !result.preflight).length
     };
-    const preflightReportPath = path.join(sessionDirectory, 'preflight-report.json');
-    await fs.writeFile(preflightReportPath, JSON.stringify({
-      schemaVersion: 1,
+    const qualityCheckReportPath = path.join(sessionDirectory, 'upscale-quality-check.json');
+    await fs.writeFile(qualityCheckReportPath, JSON.stringify({
+      schemaVersion: 2,
       createdAt: new Date().toISOString(),
       inputPath,
       scale: safeScale,
-      summary: preflightSummary,
+      summary: qualityCheckSummary,
       results: results.map((result) => ({
         id: result.id,
         label: result.label,
         outputPath: result.outputPath,
-        preflight: result.preflight,
+        qualityCheck: result.preflight,
         error: result.error
       }))
     }, null, 2), 'utf8');
 
+    const cmykSummary = {
+      enabled: Boolean(cmykOutputEnabled),
+      success: results.filter((result) => result.cmykOutput?.outputPath).length,
+      failed: results.filter((result) => result.cmykOutput?.error).length,
+      skipped: results.filter((result) => !result.cmykOutput).length,
+      settings: cmykOutputEnabled ? normalizeColorSettings({ ...(colorOutputSettings || {}), outputMode: 'rgb-cmyk' }) : null
+    };
+
     const reportPath = path.join(sessionDirectory, 'benchmark-report.json');
     const report = {
-      schemaVersion: 5,
+      schemaVersion: 6,
       createdAt: new Date().toISOString(),
       inputPath,
       referencePath,
@@ -308,21 +350,25 @@ async function runBenchmark({
         semanticProtectionEnabled: Boolean(semanticProtectionEnabled),
         codeGuardEnabled: Boolean(codeGuardEnabled)
       },
-      packagingPreflight: {
+      upscaleQualityCheck: {
         enabled: Boolean(preflightEnabled),
-        reportPath: preflightReportPath,
-        summary: preflightSummary
+        reportPath: qualityCheckReportPath,
+        summary: qualityCheckSummary
       },
+      colorOutput: cmykSummary,
       results
     };
     await fs.writeFile(reportPath, JSON.stringify(report, null, 2), 'utf8');
-    onProgress?.(100, 'Model Lab và Packaging Preflight hoàn tất');
+    onProgress?.(100, cmykOutputEnabled ? 'Model Lab, Quality Check và CMYK copies hoàn tất' : 'Model Lab và Upscale Quality Check hoàn tất');
 
     return {
       outputDirectory: sessionDirectory,
       reportPath,
-      preflightReportPath,
-      preflightSummary,
+      qualityCheckReportPath,
+      preflightReportPath: qualityCheckReportPath,
+      qualityCheckSummary,
+      preflightSummary: qualityCheckSummary,
+      cmykSummary,
       results
     };
   } finally {
