@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const sharp = require('sharp');
 
 const runtimeDirectory = path.resolve(__dirname, 'vendor', 'upscayl', `${process.platform}-${process.arch}`);
 const autoTraceDirectory = path.resolve(__dirname, 'vendor', 'autotrace', `${process.platform}-${process.arch}`);
@@ -28,17 +29,16 @@ if (fs.existsSync(autoTraceDirectory)) {
   });
 }
 
-function ppmFixture(width = 24, height = 24) {
-  const pixels = Buffer.alloc(width * height * 3, 255);
-  for (let y = 5; y < height - 5; y += 1) {
-    for (let x = 5; x < width - 5; x += 1) {
-      const offset = (y * width + x) * 3;
-      pixels[offset] = 0;
-      pixels[offset + 1] = 0;
-      pixels[offset + 2] = 0;
-    }
-  }
-  return Buffer.concat([Buffer.from(`P6\n${width} ${height}\n255\n`, 'ascii'), pixels]);
+async function createPngFixture(outputPath) {
+  const svg = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <rect width="64" height="64" fill="#ffffff"/>
+      <circle cx="32" cy="32" r="20" fill="#000000"/>
+    </svg>
+  `);
+  await sharp(svg)
+    .png({ palette: true, colours: 2, dither: 0 })
+    .toFile(outputPath);
 }
 
 function packagedResourcesDirectory(context) {
@@ -64,9 +64,9 @@ async function validatePackagedAutoTrace(context) {
   if (context.electronPlatformName === 'darwin') fs.chmodSync(executable, 0o755);
 
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'packaged-autotrace-'));
-  const inputPath = path.join(workspace, 'fixture.ppm');
+  const inputPath = path.join(workspace, 'fixture.png');
   const outputPath = path.join(workspace, 'fixture.svg');
-  fs.writeFileSync(inputPath, ppmFixture());
+  await createPngFixture(inputPath);
   const env = {
     ...process.env,
     HOME: workspace,
@@ -79,7 +79,7 @@ async function validatePackagedAutoTrace(context) {
 
   try {
     const result = spawnSync(executable, [
-      '-input-format', 'pnm',
+      '-input-format', 'png',
       '-output-format', 'svg',
       '-output-file', outputPath,
       '-color-count', '2',
