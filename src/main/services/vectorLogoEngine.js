@@ -9,6 +9,10 @@ const {
   compareRasterGeometry,
   inspectPathGeometry
 } = require('./vectorGeometryLock');
+const {
+  compareBinaryComponents,
+  reconstructBinarySvg
+} = require('./binaryShapeReconstruction');
 
 const STRATEGIES = new Set(['smart', 'detail', 'balanced', 'compact']);
 const TRACE_MAX = 3200;
@@ -16,6 +20,9 @@ const TRACE_MIN = 1100;
 const REVIEW_SIZE = 640;
 
 const PRESETS = {
+  reconstruct: {
+    id: 'binary-reconstruction', label: 'Binary Reconstruction', direct: true
+  },
   geometry: {
     id: 'geometry-lock', label: 'Geometry Lock', colors: 2, mode: 'polygon',
     colorPrecision: 8, filterSpeckle: 0, spliceThreshold: 18,
@@ -58,18 +65,20 @@ function normalizeOptions(options = {}) {
     invert: Boolean(options.invert),
     backgroundCleanup: options.backgroundCleanup !== false,
     geometryLock: options.geometryLock !== false,
+    binaryReconstruction: options.binaryReconstruction !== false,
     paletteColors: [8, 12, 16, 24, 32, 48, 64].includes(colors) ? colors : null,
     turdSize: clamp(options.turdSize, 0, 12, 1),
     sourceAnalysis: options.sourceAnalysis || null
   };
 }
 
-function selectedCandidateKeys(strategy, monochrome = false) {
+function selectedCandidateKeys(strategy, monochrome = false, binaryReconstruction = true) {
   if (monochrome) {
-    if (strategy === 'detail') return ['geometry', 'detail'];
-    if (strategy === 'balanced') return ['geometry', 'balanced'];
-    if (strategy === 'compact') return ['compact', 'geometry'];
-    return ['geometry', 'balanced', 'compact'];
+    const direct = binaryReconstruction ? ['reconstruct'] : [];
+    if (strategy === 'detail') return [...direct, 'geometry', 'detail'];
+    if (strategy === 'balanced') return [...direct, 'geometry', 'balanced'];
+    if (strategy === 'compact') return [...direct, 'compact', 'geometry'];
+    return [...direct, 'geometry', 'balanced'];
   }
   if (strategy === 'detail') return ['detail', 'balanced'];
   if (strategy === 'compact') return ['compact', 'balanced'];
@@ -210,9 +219,7 @@ async function prepareSource(inputPath, workspace, options) {
       .flatten({ background: '#ffffff' })
       .grayscale()
       .threshold(threshold);
-    if (trace.scale !== 1) {
-      pipeline = pipeline.resize(trace.width, trace.height, { fit: 'fill', kernel: sharp.kernel.nearest });
-    }
+    if (trace.scale !== 1) pipeline = pipeline.resize(trace.width, trace.height, { fit: 'fill', kernel: sharp.kernel.nearest });
     if (options.invert) pipeline = pipeline.negate();
     await pipeline.png({ palette: true, colours: 2, dither: 0, compressionLevel: 7 }).toFile(normalizedPath);
   } else {
@@ -314,9 +321,9 @@ async function comparisonReference(sourcePath, effective) {
 function colorSimplicityScore(colorCount, monochrome) {
   if (!monochrome) return 100;
   if (colorCount <= 2) return 100;
-  if (colorCount === 3) return 65;
-  if (colorCount === 4) return 35;
-  return Math.max(0, 25 - (colorCount - 4) * 4);
+  if (colorCount === 3) return 50;
+  if (colorCount === 4) return 20;
+  return 0;
 }
 
 async function assessSvg(svg, reference, effective) {
@@ -331,16 +338,35 @@ async function assessSvg(svg, reference, effective) {
   const rasterGeometry = effective.monochrome
     ? compareRasterGeometry(reference.data, rendered, reference.info)
     : { orientationAgreement: 100, axisAgreement: 100, cornerPreservation: 100 };
+  const componentValidation = effective.monochrome
+    ? compareBinaryComponents(reference.data, rendered, reference.info)
+    : {
+        sourceComponentCount: 0,
+        renderedComponentCount: 0,
+        worstComponentIoU: 100,
+        p10ComponentIoU: 100,
+        medianComponentIoU: 100,
+        weightedComponentIoU: 100,
+        unmatchedSourceComponents: 0,
+        worstComponents: []
+      };
   const straightnessScore = effective.monochrome
     ? Number((pathGeometry.straightnessScore * 0.55 + rasterGeometry.orientationAgreement * 0.30 + rasterGeometry.axisAgreement * 0.15).toFixed(2))
     : pathGeometry.straightnessScore;
+  const componentScore = Number((
+    componentValidation.weightedComponentIoU * 0.55
+    + componentValidation.p10ComponentIoU * 0.25
+    + componentValidation.worstComponentIoU * 0.20
+  ).toFixed(2));
   return {
     ...comparePixels(reference.data, rendered, reference.info),
     ...complexity,
     ...rasterGeometry,
     pathGeometry,
     straightnessScore,
-    colorSimplicity: colorSimplicityScore(complexity.colorCount, effective.monochrome)
+    colorSimplicity: colorSimplicityScore(complexity.colorCount, effective.monochrome),
+    componentScore,
+    componentValidation
   };
 }
 
@@ -354,14 +380,15 @@ function scoreCandidates(candidates, strategy, monochrome = false) {
     candidate.metrics.complexityScore = Number(complexity.toFixed(2));
     if (monochrome) {
       candidate.score = Number((
-        candidate.metrics.fidelity * 0.30
-        + candidate.metrics.edgeAgreement * 0.20
-        + candidate.metrics.cornerPreservation * 0.20
-        + candidate.metrics.straightnessScore * 0.15
-        + complexity * 0.10
+        candidate.metrics.fidelity * 0.20
+        + candidate.metrics.edgeAgreement * 0.15
+        + candidate.metrics.cornerPreservation * 0.15
+        + candidate.metrics.straightnessScore * 0.12
+        + candidate.metrics.componentScore * 0.25
+        + complexity * 0.08
         + candidate.metrics.colorSimplicity * 0.05
       ).toFixed(2));
-      candidate.rejected = candidate.metrics.colorCount > 4;
+      candidate.rejected = candidate.metrics.colorCount > 2;
       candidate.rejectedReason = candidate.rejected ? `Nguồn đơn sắc nhưng SVG có ${candidate.metrics.colorCount} màu.` : null;
     } else {
       const weights = strategy === 'detail'
@@ -384,23 +411,55 @@ function scoreCandidates(candidates, strategy, monochrome = false) {
   });
 }
 
+async function buildDirectCandidate(prepared, reference, optimize) {
+  const reconstructed = await reconstructBinarySvg(prepared.normalizedPath, {
+    outputWidth: prepared.source.width,
+    outputHeight: prepared.source.height
+  });
+  const optimized = String(await optimize(reconstructed.svg, {
+    plugins: ['preset-default', { name: 'removeTitle' }],
+    multipass: true,
+    multipassIterations: 2
+  }));
+  return {
+    id: PRESETS.reconstruct.id,
+    label: PRESETS.reconstruct.label,
+    preprocessing: {
+      threshold: prepared.effective.threshold,
+      paletteColors: 2,
+      source: 'binary-mask-original-resolution'
+    },
+    trace: { engine: 'direct-boundary-contour', mode: 'line-polygon' },
+    reconstruction: reconstructed.stats,
+    geometryLock: null,
+    metrics: await assessSvg(optimized, reference, prepared.effective),
+    svg: optimized
+  };
+}
+
 async function vectorizeLogo({ inputPath, outputPath, options = {}, onProgress }) {
   const normalized = normalizeOptions(options);
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'print-vector-logo-'));
   const candidateErrors = [];
   try {
-    onProgress?.(4, 'Đang nhận diện logo đơn sắc và hình học');
+    onProgress?.(4, 'Đang nhận diện logo đơn sắc và phân tách component');
     const prepared = await prepareSource(inputPath, workspace, normalized);
     const reference = await comparisonReference(prepared.normalizedPath, prepared.effective);
     const { vectorize, optimize, ColorMode, Hierarchical, PathSimplifyMode } = await import('@neplex/vectorizer');
-    const keys = selectedCandidateKeys(normalized.strategy, prepared.effective.monochrome);
+    const keys = selectedCandidateKeys(normalized.strategy, prepared.effective.monochrome, normalized.binaryReconstruction);
     const candidates = [];
 
     for (let index = 0; index < keys.length; index += 1) {
-      const preset = PRESETS[keys[index]];
-      const candidatePath = path.join(workspace, `${preset.id}.png`);
-      onProgress?.(16 + Math.round((index / keys.length) * 58), `Trace ${index + 1}/${keys.length}: ${preset.label}`);
+      const key = keys[index];
+      const preset = PRESETS[key];
+      onProgress?.(14 + Math.round((index / keys.length) * 62), `${index + 1}/${keys.length}: ${preset.label}`);
       try {
+        if (preset.direct) {
+          candidates.push(await buildDirectCandidate(prepared, reference, optimize));
+          continue;
+        }
+
+        const candidatePath = path.join(workspace, `${preset.id}.png`);
         const preprocessing = await makeCandidateInput(prepared.normalizedPath, candidatePath, preset, normalized, prepared.effective);
         const source = await fs.readFile(candidatePath);
         const speckle = preset.id === 'detail-preserve'
@@ -449,6 +508,7 @@ async function vectorizeLogo({ inputPath, outputPath, options = {}, onProgress }
           preprocessing,
           trace: { ...preset, filterSpeckle: speckle, actualMode: preset.mode },
           geometryLock,
+          reconstruction: null,
           metrics: await assessSvg(optimized, reference, prepared.effective),
           svg: optimized
         });
@@ -458,7 +518,9 @@ async function vectorizeLogo({ inputPath, outputPath, options = {}, onProgress }
     }
 
     if (!candidates.length) throw new Error(`Không candidate nào thành công. ${candidateErrors.map((item) => `${item.id}: ${item.error}`).join(' | ')}`);
-    onProgress?.(84, prepared.effective.monochrome ? 'Đang chấm góc, độ thẳng, fidelity và số node' : 'Đang chọn kết quả theo fidelity, cạnh và số node');
+    onProgress?.(84, prepared.effective.monochrome
+      ? 'Đang chấm từng component, góc, độ thẳng và lòng chữ'
+      : 'Đang chọn kết quả theo fidelity, cạnh và số node');
     const ranked = scoreCandidates(candidates, normalized.strategy, prepared.effective.monochrome);
     const selected = ranked.find((candidate) => !candidate.rejected) || ranked[0];
     await fs.writeFile(outputPath, selected.svg, 'utf8');
@@ -466,11 +528,17 @@ async function vectorizeLogo({ inputPath, outputPath, options = {}, onProgress }
     const warnings = [];
     if (selected.metrics.edgeRecall < 75) warnings.push('Edge recall thấp; nên kiểm tra chi tiết nhỏ trong Illustrator.');
     if (selected.metrics.nodeEstimate > 5000) warnings.push('SVG vẫn có nhiều node; thử chế độ Ít node hoặc giảm số màu.');
-    if (prepared.effective.monochrome && selected.metrics.cornerPreservation < 82) warnings.push('Corner Preservation chưa đạt mức an toàn; cần soi các góc chữ ở 400%.');
-    if (prepared.effective.monochrome && selected.metrics.straightnessScore < 88) warnings.push('Một số cạnh gần thẳng vẫn còn độ cong; nên kiểm tra trong Illustrator.');
+    if (prepared.effective.monochrome && selected.metrics.cornerPreservation < 84) warnings.push('Corner Preservation chưa đạt mức an toàn; cần soi các góc chữ ở 400%.');
+    if (prepared.effective.monochrome && selected.metrics.straightnessScore < 90) warnings.push('Một số cạnh gần thẳng vẫn còn độ cong; nên kiểm tra trong Illustrator.');
+    if (prepared.effective.monochrome && selected.metrics.componentValidation.worstComponentIoU < 90) {
+      warnings.push(`Component yếu nhất chỉ đạt ${selected.metrics.componentValidation.worstComponentIoU}%; không nên tự động PASS.`);
+    }
+    if (prepared.effective.monochrome && selected.metrics.componentValidation.p10ComponentIoU < 92) {
+      warnings.push(`10% component yếu nhất đạt ${selected.metrics.componentValidation.p10ComponentIoU}%; cần kiểm tra dấu, counter và đầu nét.`);
+    }
     if (prepared.effective.monochrome && selected.metrics.colorCount > 2) warnings.push(`Logo đơn sắc nhưng SVG còn ${selected.metrics.colorCount} màu; cần kiểm tra separation.`);
     const report = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       createdAt: new Date().toISOString(),
       inputPath,
       outputPath,
@@ -479,16 +547,24 @@ async function vectorizeLogo({ inputPath, outputPath, options = {}, onProgress }
       effectiveColorMode: prepared.effective.colorMode,
       autoMonochrome: prepared.effective.autoMonochrome,
       geometryLockEnabled: normalized.geometryLock,
+      binaryReconstructionEnabled: normalized.binaryReconstruction,
       threshold: prepared.effective.threshold,
       source: prepared.source,
       selectedCandidate: selected.id,
       selectedScore: selected.score,
+      qualityGate: {
+        status: warnings.length ? 'review' : 'pass',
+        worstComponentIoU: selected.metrics.componentValidation.worstComponentIoU,
+        p10ComponentIoU: selected.metrics.componentValidation.p10ComponentIoU,
+        cornerPreservation: selected.metrics.cornerPreservation,
+        straightnessScore: selected.metrics.straightnessScore
+      },
       warnings,
       candidates: ranked.map(({ svg, ...candidate }) => candidate),
       candidateErrors
     };
     await fs.writeFile(reportPath, JSON.stringify(report, null, 2), 'utf8');
-    onProgress?.(100, `Hoàn tất · ${selected.label} · Corner ${selected.metrics.cornerPreservation ?? '—'} · khoảng ${selected.metrics.nodeEstimate} node`);
+    onProgress?.(100, `Hoàn tất · ${selected.label} · worst component ${selected.metrics.componentValidation.worstComponentIoU ?? '—'}% · khoảng ${selected.metrics.nodeEstimate} node`);
     return { outputPath, reportPath, vectorReport: report };
   } finally {
     await fs.rm(workspace, { recursive: true, force: true });
