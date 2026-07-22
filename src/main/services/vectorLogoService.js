@@ -6,6 +6,7 @@ const os = require('node:os');
 const sharp = require('sharp');
 const engine = require('./vectorLogoEngine');
 const { vectorizeMonochromeWithPotrace } = require('./potraceSmartService');
+const { runColorMultiEngine } = require('./colorVectorRouterService');
 const {
   analyzeVectorInput,
   formatVectorInputRejection
@@ -199,6 +200,7 @@ async function runVTracerFallback(payload, options, sourceAnalysis, fallbackErro
   if (fallbackError) {
     result.vectorReport.engineRouter = {
       selectedEngine: 'vtracer',
+      actualEngine: 'vtracer',
       attemptedEngine: 'potrace',
       sourceType: 'monochrome',
       fallbackReason: fallbackError.message || String(fallbackError)
@@ -209,6 +211,15 @@ async function runVTracerFallback(payload, options, sourceAnalysis, fallbackErro
     ];
   }
   return result;
+}
+
+async function runColorRouter(payload, options, sourceAnalysis, inputPath) {
+  return runColorMultiEngine({
+    inputPath,
+    outputPath: payload.outputPath,
+    options: { ...options, sourceAnalysis },
+    onProgress: payload.onProgress
+  });
 }
 
 async function vectorizeLogo(payload) {
@@ -241,12 +252,16 @@ async function vectorizeLogo(payload) {
     }
   }
 
-  const shouldCleanup = !useGeometrySource
-    && options.backgroundCleanup !== false
+  if (useGeometrySource) {
+    const result = await runVTracerFallback(payload, options, sourceAnalysis);
+    return attachInputQuality(result, payload.inputPath, inputQuality);
+  }
+
+  const shouldCleanup = options.backgroundCleanup !== false
     && options.colorMode !== 'binary';
 
   if (!shouldCleanup) {
-    const result = await runVTracerFallback(payload, options, sourceAnalysis);
+    const result = await runColorRouter(payload, options, sourceAnalysis, payload.inputPath);
     return attachInputQuality(result, payload.inputPath, inputQuality);
   }
 
@@ -254,11 +269,8 @@ async function vectorizeLogo(payload) {
   const cleanedInput = path.join(workspace, 'background-cleaned.png');
   try {
     const cleanup = await safeBackgroundCleanup(payload.inputPath, cleanedInput);
-    const result = await engine.vectorizeLogo({
-      ...payload,
-      inputPath: cleanup.applied ? cleanedInput : payload.inputPath,
-      options: { ...options, backgroundCleanup: false, sourceAnalysis }
-    });
+    const workingInput = cleanup.applied ? cleanedInput : payload.inputPath;
+    const result = await runColorRouter(payload, options, sourceAnalysis, workingInput);
     return attachInputQuality(result, payload.inputPath, inputQuality, cleanup);
   } finally {
     await fs.rm(workspace, { recursive: true, force: true });
