@@ -51,6 +51,8 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Prepare official AutoTrace Windows x64 runtime
         run: npm run autotrace:prepare -- --platform win32 --arch x64 --strict
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Run smoke tests with AutoTrace candidate
         run: npm run test:smoke
       - name: Build Windows V2.9.2 installers
