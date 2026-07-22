@@ -14,7 +14,8 @@
       .smart-vector-hint { margin: -4px 0 2px; color: #8ea49a; font-size: 9px; line-height: 1.45; }
       .smart-vector-badge { display: inline-block; margin-left: 5px; padding: 2px 6px; border-radius: 99px; background: #244433; color: #bde8c9; font-size: 8px; letter-spacing: .07em; }
       .vector-result-lines { white-space: pre-line; line-height: 1.5; }
-      .geometry-lock-row { border: 1px solid #345542; background: #101b15; border-radius: 9px; padding: 9px; }
+      .geometry-lock-row, .binary-reconstruction-row { border: 1px solid #345542; background: #101b15; border-radius: 9px; padding: 9px; }
+      .binary-reconstruction-row { border-color: #53683d; background: #171d10; }
     `;
     document.head.append(style);
   }
@@ -24,7 +25,7 @@
     const notice = settings.querySelector('.notice');
     if (notice) {
       notice.classList.add('smart-vector-notice');
-      notice.innerHTML = '<b>Smart Multi-Pass Vector</b><span class="smart-vector-badge">GEOMETRY LOCK</span><br>Tự nhận diện logo đơn sắc, giữ góc sắc và phạt đường thẳng bị biến thành đường cong.';
+      notice.innerHTML = '<b>Smart Multi-Pass Vector</b><span class="smart-vector-badge">BINARY RECONSTRUCTION</span><br>Dựng contour trực tiếp từ mask đen trắng và kiểm tra từng component nhỏ trước khi PASS.';
     }
 
     const colorMode = get('colorMode');
@@ -70,10 +71,15 @@
     geometryLock.innerHTML = '<input id="vectorGeometryLock" type="checkbox" checked><span>Geometry Lock: giữ góc, snap cạnh ngang/dọc và đổi Bézier gần thẳng thành line</span>';
     cleanup.insertAdjacentElement('afterend', geometryLock);
 
+    const reconstruction = document.createElement('label');
+    reconstruction.className = 'check-row binary-reconstruction-row';
+    reconstruction.innerHTML = '<input id="vectorBinaryReconstruction" type="checkbox" checked><span>Binary Shape Reconstruction: dựng contour trực tiếp, giữ dấu nhỏ, lòng chữ và đầu nét</span>';
+    geometryLock.insertAdjacentElement('afterend', reconstruction);
+
     const hint = document.createElement('p');
     hint.className = 'smart-vector-hint';
-    hint.textContent = 'Logo đơn sắc được threshold ở kích thước gốc, không phóng Lanczos trước trace. Smart Auto so Polygon và Spline bằng Corner Preservation.';
-    geometryLock.insertAdjacentElement('afterend', hint);
+    hint.textContent = 'Logo đơn sắc được threshold ở kích thước gốc. Quality Gate chấm từng component để lỗi nhỏ không bị điểm tổng thể che lấp.';
+    reconstruction.insertAdjacentElement('afterend', hint);
 
     const turd = get('turdSize');
     const turdValue = get('turdValue');
@@ -110,6 +116,7 @@
       invert: Boolean(get('invertVector')?.checked),
       backgroundCleanup: get('vectorBackgroundCleanup')?.checked !== false,
       geometryLock: get('vectorGeometryLock')?.checked !== false,
+      binaryReconstruction: get('vectorBinaryReconstruction')?.checked !== false,
       paletteColors: paletteValue || null
     };
   }
@@ -133,6 +140,8 @@
     if (!report || !selected) return `Đã lưu SVG: ${outputPath}`;
     const metrics = selected.metrics || {};
     const lock = selected.geometryLock || {};
+    const reconstruction = selected.reconstruction || {};
+    const component = metrics.componentValidation || {};
     const mode = selected.label || report.selectedCandidate;
     const sourceMode = report.autoMonochrome
       ? `Tự nhận diện đơn sắc ${report.source?.analysis?.confidence ?? '—'}%`
@@ -143,15 +152,24 @@
     const geometryLine = report.effectiveColorMode === 'binary'
       ? `Corner ${metrics.cornerPreservation ?? '—'}% · Straight ${metrics.straightnessScore ?? '—'}% · Axis ${metrics.axisAgreement ?? '—'}%`
       : `Fidelity ${metrics.fidelity ?? '—'}% · Edge ${metrics.edgeAgreement ?? '—'}%`;
-    const cleanupLine = report.geometryLockEnabled && lock
+    const componentLine = report.effectiveColorMode === 'binary'
+      ? `Component: worst ${component.worstComponentIoU ?? '—'}% · P10 ${component.p10ComponentIoU ?? '—'}% · weighted ${component.weightedComponentIoU ?? '—'}%`
+      : null;
+    const cleanupLine = report.geometryLockEnabled && selected.geometryLock
       ? `Geometry Lock: ${lock.curvesConvertedToLines ?? 0} curve→line · ${lock.axisSnaps ?? 0} snap · bỏ ${lock.collinearNodesRemoved ?? 0} node thẳng hàng`
       : null;
+    const reconstructionLine = selected.reconstruction
+      ? `Reconstruction: ${reconstruction.loopCount ?? 0} contour · giảm node ${reconstruction.nodeReductionPercent ?? 0}% · ${reconstruction.horizontalSnaps ?? 0} H / ${reconstruction.verticalSnaps ?? 0} V snap`
+      : null;
+    const quality = report.qualityGate?.status === 'pass' ? 'PASS' : 'REVIEW';
     return [
       `Đã lưu SVG: ${outputPath}`,
-      `${mode} · điểm ${report.selectedScore}/100 · ${sourceMode}`,
+      `${quality} · ${mode} · điểm ${report.selectedScore}/100 · ${sourceMode}`,
       `Fidelity ${metrics.fidelity ?? '—'}% · Edge ${metrics.edgeAgreement ?? '—'}%`,
       geometryLine,
+      componentLine,
       `${metrics.pathCount ?? '—'} path · khoảng ${metrics.nodeEstimate ?? '—'} node · ${metrics.colorCount ?? '—'} màu`,
+      reconstructionLine,
       cleanupLine,
       `Đã so ${report.candidates.length} candidate${reportPath}`
     ].filter(Boolean).join('\n');
@@ -171,7 +189,7 @@
       get('progressWrap').hidden = false;
       get('resultBox').hidden = true;
       get('progressBar').style.width = '1%';
-      get('progressText').textContent = 'Đang nhận diện hình học và chuẩn bị Geometry Lock...';
+      get('progressText').textContent = 'Đang phân tách component và dựng contour nhị phân...';
 
       const response = await window.studio.process({
         operation: 'vector-logo',
@@ -185,7 +203,7 @@
       state.outputPath = actualOutputPath;
 
       const resultBox = get('resultBox');
-      resultBox.classList.remove('error');
+      resultBox.classList.toggle('error', payload?.vectorReport?.qualityGate?.status !== 'pass');
       resultBox.classList.add('vector-result-lines');
       resultBox.textContent = resultText(actualOutputPath, typeof payload === 'object' ? payload : null);
       resultBox.hidden = false;
@@ -210,10 +228,10 @@
   function syncVectorBrand(event) {
     const button = event.target.closest('.nav-item');
     if (!button || button.dataset.tool !== 'vector-logo') return;
-    document.title = 'Print Upscale Studio V2.8.1 Geometry Lock';
+    document.title = 'Print Upscale Studio V2.8.2 Binary Reconstruction';
     const brandVersion = document.querySelector('.brand span');
-    if (brandVersion) brandVersion.textContent = 'Studio V2.8.1 · Geometry Lock';
-    get('toolDescription').textContent = 'Monochrome Geometry Lock, Polygon candidate, corner scoring và snap cạnh thẳng.';
+    if (brandVersion) brandVersion.textContent = 'Studio V2.8.2 · Binary Reconstruction';
+    get('toolDescription').textContent = 'Direct binary contours, local component validation, Geometry Lock và corner scoring.';
   }
 
   installStyles();
