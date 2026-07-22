@@ -1,7 +1,30 @@
+const fs = require('node:fs');
 const path = require('node:path');
 
 const runtimeDirectory = path.resolve(__dirname, 'vendor', 'upscayl', `${process.platform}-${process.arch}`);
+const autoTraceDirectory = path.resolve(__dirname, 'vendor', 'autotrace', `${process.platform}-${process.arch}`);
 const colorProfilesDirectory = path.resolve(__dirname, 'vendor', 'color-profiles');
+
+const extraResources = [
+  {
+    from: runtimeDirectory,
+    to: 'upscayl-runtime',
+    filter: ['**/*']
+  },
+  {
+    from: colorProfilesDirectory,
+    to: 'color-profiles',
+    filter: ['**/*']
+  }
+];
+
+if (fs.existsSync(autoTraceDirectory)) {
+  extraResources.push({
+    from: autoTraceDirectory,
+    to: 'autotrace-runtime',
+    filter: ['**/*']
+  });
+}
 
 module.exports = {
   appId: 'vn.min.printupscalestudio',
@@ -17,18 +40,7 @@ module.exports = {
     'LICENSE',
     'THIRD_PARTY_NOTICES.md'
   ],
-  extraResources: [
-    {
-      from: runtimeDirectory,
-      to: 'upscayl-runtime',
-      filter: ['**/*']
-    },
-    {
-      from: colorProfilesDirectory,
-      to: 'color-profiles',
-      filter: ['**/*']
-    }
-  ],
+  extraResources,
   mac: {
     category: 'public.app-category.graphics-design',
     target: ['dmg'],

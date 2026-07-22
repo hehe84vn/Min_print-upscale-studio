@@ -25,7 +25,7 @@
     const notice = settings.querySelector('.notice');
     if (notice) {
       notice.classList.add('smart-vector-notice');
-      notice.innerHTML = '<b>Smart Vector Router</b><span class="smart-vector-badge">MULTI-ENGINE V2.9.1</span><br>Logo đơn sắc ưu tiên Potrace; ảnh màu dùng VTracer. Nếu runtime Potrace thiếu, ứng dụng tự fallback và báo đúng engine thực tế.';
+      notice.innerHTML = '<b>Smart Vector Router</b><span class="smart-vector-badge">MULTI-ENGINE V2.9.2</span><br>Logo đơn sắc ưu tiên Potrace; artwork màu phẳng so sánh VTracer và AutoTrace. Runtime thiếu sẽ fallback và báo đúng engine thực tế.';
     }
 
     const colorMode = get('colorMode');
@@ -68,7 +68,7 @@
 
     const geometryLock = document.createElement('label');
     geometryLock.className = 'check-row geometry-lock-row';
-    geometryLock.innerHTML = '<input id="vectorGeometryLock" type="checkbox" checked><span>Geometry Lock: giữ góc, snap cạnh ngang/dọc và đổi Bézier gần thẳng thành line</span>';
+    geometryLock.innerHTML = '<input id="vectorGeometryLock" type="checkbox" checked><span>Geometry Lock: fallback kiểm tra góc và cạnh đơn sắc, không còn là engine chính</span>';
     cleanup.insertAdjacentElement('afterend', geometryLock);
 
     const reconstruction = document.createElement('label');
@@ -78,7 +78,7 @@
 
     const hint = document.createElement('p');
     hint.className = 'smart-vector-hint';
-    hint.textContent = 'Input Quality Gate chạy trước router. Report sẽ ghi engine, runtime target, preset, tham số, fidelity, component và lý do fallback.';
+    hint.textContent = 'Input Quality Gate chạy trước router. Report ghi candidate VTracer/AutoTrace, engine thắng, runtime, preset, fidelity, edge agreement, số node và lý do fallback.';
     reconstruction.insertAdjacentElement('afterend', hint);
 
     const turd = get('turdSize');
@@ -117,6 +117,7 @@
       backgroundCleanup: get('vectorBackgroundCleanup')?.checked !== false,
       geometryLock: get('vectorGeometryLock')?.checked !== false,
       binaryReconstruction: get('vectorBinaryReconstruction')?.checked !== false,
+      autoTrace: true,
       paletteColors: paletteValue || null
     };
   }
@@ -134,6 +135,14 @@
     return outputPath;
   }
 
+  function engineName(value) {
+    const id = String(value || '').toLowerCase();
+    if (id.includes('potrace')) return 'Potrace';
+    if (id.includes('autotrace')) return 'AutoTrace';
+    if (id.includes('vtracer')) return 'VTracer';
+    return value || 'Không xác định';
+  }
+
   function resultText(outputPath, payload) {
     const report = payload?.vectorReport;
     const selected = report?.candidates?.find((candidate) => candidate.id === report.selectedCandidate);
@@ -145,25 +154,31 @@
     const input = report.inputQuality || {};
     const inputGate = input.gate || {};
     const router = report.engineRouter || {};
-    const runtime = router.runtime || {};
-    const actualEngine = router.actualEngine || router.selectedEngine || selected.trace?.engine || 'unknown';
+    const runtime = router.runtime || selected.trace?.runtime || {};
+    const actualEngine = router.actualEngine || router.selectedEngine || selected.trace?.engine || selected.engine || 'unknown';
+    const attempted = Array.isArray(router.attemptedEngines) ? router.attemptedEngines.map(engineName).join(' + ') : null;
+    const fallbackSource = router.sourceType === 'color' ? 'AutoTrace' : 'Potrace';
     const fallbackLine = router.fallbackReason
-      ? `Fallback: Potrace → VTracer · ${router.fallbackReason}`
+      ? `Fallback: ${fallbackSource} → ${engineName(router.selectedEngine || 'vtracer')} · ${router.fallbackReason}`
       : null;
-    const engineLine = `Engine thực tế: ${actualEngine}${runtime.target ? ` · ${runtime.target}` : ''}${runtime.packageVersion ? ` · v${runtime.packageVersion}` : ''}`;
+    const runtimeVersion = runtime.packageVersion || runtime.version;
+    const engineLine = `Engine thực tế: ${engineName(actualEngine)}${runtime.target ? ` · ${runtime.target}` : ''}${runtimeVersion ? ` · v${runtimeVersion}` : ''}`;
+    const comparisonLine = Array.isArray(report.engineComparison)
+      ? `So engine: ${report.engineComparison.map((candidate) => `${engineName(candidate.engine || candidate.trace?.engine)} ${candidate.score ?? '—'}`).join(' · ')}`
+      : attempted ? `Đã thử: ${attempted}` : null;
     const mode = selected.label || report.selectedCandidate;
     const sourceMode = report.autoMonochrome
       ? `Tự nhận diện đơn sắc ${report.source?.analysis?.confidence ?? '—'}%`
       : report.effectiveColorMode === 'binary'
         ? 'Đơn sắc'
-        : 'Màu';
+        : 'Màu phẳng';
     const reportPath = payload.reportPath ? `\nBáo cáo: ${payload.reportPath}` : '';
     const inputLine = inputGate.status
       ? `Input ${String(inputGate.status).toUpperCase()} ${inputGate.score}/100 · logo ${input.logoBounds?.width ?? '—'}×${input.logoBounds?.height ?? '—'} px · sharp ${input.edge?.sharpnessScore ?? '—'} · stroke ${input.stroke?.minimumStrokePx ?? '—'} px`
       : null;
     const geometryLine = report.effectiveColorMode === 'binary'
       ? `Corner ${metrics.cornerPreservation ?? '—'}% · Straight ${metrics.straightnessScore ?? '—'}% · Axis ${metrics.axisAgreement ?? '—'}%`
-      : `Fidelity ${metrics.fidelity ?? '—'}% · Edge ${metrics.edgeAgreement ?? '—'}%`;
+      : `Fidelity ${metrics.fidelity ?? '—'}% · Edge ${metrics.edgeAgreement ?? '—'}% · Recall ${metrics.edgeRecall ?? '—'}%`;
     const componentLine = report.effectiveColorMode === 'binary'
       ? `Component: worst ${component.worstComponentIoU ?? '—'}% · P10 ${component.p10ComponentIoU ?? '—'}% · weighted ${component.weightedComponentIoU ?? '—'}%`
       : null;
@@ -177,10 +192,10 @@
     return [
       `Đã lưu SVG: ${outputPath}`,
       engineLine,
+      comparisonLine,
       fallbackLine,
       inputLine,
       `${quality} · ${mode} · điểm ${report.selectedScore}/100 · ${sourceMode}`,
-      `Fidelity ${metrics.fidelity ?? metrics.foregroundIoU ?? '—'}% · Edge ${metrics.edgeAgreement ?? '—'}%`,
       geometryLine,
       componentLine,
       `${metrics.pathCount ?? '—'} path · khoảng ${metrics.nodeEstimate ?? '—'} node · ${metrics.colorCount ?? '—'} màu`,
@@ -244,10 +259,10 @@
   function syncVectorBrand(event) {
     const button = event.target.closest('.nav-item');
     if (!button || button.dataset.tool !== 'vector-logo') return;
-    document.title = 'Print Upscale Studio V2.9.1 Multi-Engine Vector Core';
+    document.title = 'Print Upscale Studio V2.9.2 AutoTrace Color Router';
     const brandVersion = document.querySelector('.brand span');
-    if (brandVersion) brandVersion.textContent = 'Studio V2.9.1 · Multi-Engine Vector';
-    get('toolDescription').textContent = 'Smart Router: Potrace cho logo đơn sắc, VTracer cho ảnh màu, fallback có báo engine thực tế.';
+    if (brandVersion) brandVersion.textContent = 'Studio V2.9.2 · AutoTrace Color Router';
+    get('toolDescription').textContent = 'Smart Router: Potrace cho logo đơn sắc; VTracer và AutoTrace cạnh tranh cho artwork màu phẳng.';
   }
 
   installStyles();
