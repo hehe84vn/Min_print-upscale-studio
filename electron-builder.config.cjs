@@ -79,7 +79,7 @@ async function validatePackagedAutoTrace(context) {
 
   try {
     const result = spawnSync(executable, [
-      '-input-format', 'ppm',
+      '-input-format', 'pnm',
       '-output-format', 'svg',
       '-output-file', outputPath,
       '-color-count', '2',
