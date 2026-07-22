@@ -4,10 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
 import vectorModule from '../src/main/services/vectorLogoService.js';
-import runtimeModule from '../src/main/services/potraceRuntimeService.js';
+import potraceRuntimeModule from '../src/main/services/potraceRuntimeService.js';
+import autotraceRuntimeModule from '../src/main/services/autotraceRuntimeService.js';
 
 const { vectorizeLogo, inspectSvgComplexity, selectedCandidateKeys, safeBackgroundCleanup } = vectorModule;
-const { detectPotraceRuntime } = runtimeModule;
+const { detectPotraceRuntime } = potraceRuntimeModule;
+const { detectAutoTraceRuntime } = autotraceRuntimeModule;
 const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'vector-logo-smoke-'));
 const colorInputPath = path.join(workspace, 'color-logo-source.png');
 const cleanedPath = path.join(workspace, 'logo-cleaned.png');
@@ -55,15 +57,30 @@ try {
   const colorSvg = await fs.readFile(colorResult.outputPath, 'utf8');
   const colorReport = JSON.parse(await fs.readFile(colorResult.reportPath, 'utf8'));
   const colorComplexity = inspectSvgComplexity(colorSvg);
+  const selectedColor = colorReport.candidates.find((candidate) => candidate.id === colorReport.selectedCandidate);
+  const autoTraceRuntime = detectAutoTraceRuntime();
   assert.match(colorSvg, /<svg\b/i);
-  assert.equal(colorReport.schemaVersion, 4);
+  assert.ok(colorReport.schemaVersion >= 7);
   assert.equal(colorReport.backgroundCleanup.applied, true);
+  assert.equal(colorReport.engineRouter.sourceType, 'color');
+  assert.ok(colorReport.engineRouter.attemptedEngines.includes('vtracer'));
+  assert.ok(colorReport.engineRouter.attemptedEngines.includes('autotrace'));
+  assert.ok(['vtracer', 'autotrace'].includes(colorReport.engineRouter.selectedEngine));
   assert.ok(selectedCandidateKeys('smart').length >= 3);
   assert.ok(colorReport.candidates.length >= 2);
-  assert.ok(colorReport.selectedCandidate);
+  assert.ok(selectedColor);
   assert.ok(Number.isFinite(colorReport.selectedScore));
+  assert.ok(Number.isFinite(selectedColor.metrics.fidelity));
+  assert.ok(Number.isFinite(selectedColor.metrics.edgeAgreement));
   assert.ok(colorComplexity.shapeCount > 0);
   assert.ok(colorComplexity.nodeEstimate > 0);
+  if (autoTraceRuntime.available) {
+    assert.ok(colorReport.candidates.some((candidate) => candidate.engine === 'autotrace'));
+    assert.equal(colorReport.engineComparison.length, 2);
+  } else {
+    assert.equal(colorReport.engineRouter.selectedEngine, 'vtracer');
+    assert.match(colorReport.engineRouter.fallbackReason, /AutoTrace/);
+  }
 
   const monoArtwork = Buffer.from(`
     <svg xmlns="http://www.w3.org/2000/svg" width="900" height="420" viewBox="0 0 900 420">
@@ -117,7 +134,7 @@ try {
   assert.equal(selected.trace.fillRule, 'evenodd');
   assert.ok(['pass', 'review'].includes(monoReport.qualityGate.status));
 
-  console.log(`Smart Vector color OK: ${colorReport.selectedCandidate}, ${colorComplexity.nodeEstimate} nodes.`);
+  console.log(`Smart Vector color OK: ${colorReport.engineRouter.selectedEngine}, ${colorReport.selectedCandidate}, ${colorComplexity.nodeEstimate} nodes.`);
   console.log(`Potrace mono OK: ${monoReport.selectedCandidate}, IoU ${selected.metrics.foregroundIoU}%, worst ${selected.metrics.componentValidation.worstComponentIoU}%.`);
 } finally {
   await fs.rm(workspace, { recursive: true, force: true });
