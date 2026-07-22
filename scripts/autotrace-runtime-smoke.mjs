@@ -8,7 +8,12 @@ const target = `${process.platform}-${process.arch}`;
 const repositoryRoot = path.resolve(import.meta.dirname, '..');
 const runtimeRoot = path.join(repositoryRoot, 'vendor', 'autotrace', target);
 const manifestPath = path.join(runtimeRoot, 'runtime.json');
+const diagnosticsPath = path.join(repositoryRoot, 'runtime-smoke-diagnostics.json');
 const executable = path.join(runtimeRoot, 'bin', process.platform === 'win32' ? 'autotrace.exe' : 'autotrace');
+let stage = 'initialize';
+let manifest = null;
+let versionOutput = '';
+let traceOutput = '';
 
 async function exists(filePath) {
   try {
@@ -27,10 +32,16 @@ function run(command, args, options = {}) {
     maxBuffer: 16 * 1024 * 1024,
     ...options
   });
+  const output = `${result.stdout || ''}\n${result.stderr || ''}`.trim();
   if (result.error || result.status !== 0) {
-    throw new Error(`${command} ${args.join(' ')} failed (${result.status}): ${result.error?.message || result.stderr || result.stdout || 'unknown error'}`);
+    const error = new Error(`${command} ${args.join(' ')} failed (${result.status}): ${result.error?.message || output || 'unknown error'}`);
+    error.command = command;
+    error.args = args;
+    error.status = result.status;
+    error.output = output;
+    throw error;
   }
-  return `${result.stdout || ''}\n${result.stderr || ''}`.trim();
+  return output;
 }
 
 function cleanEnvironment(homeDirectory) {
@@ -64,69 +75,110 @@ function ppmFixture(width = 32, height = 32) {
   return Buffer.concat([Buffer.from(`P6\n${width} ${height}\n255\n`, 'ascii'), pixels]);
 }
 
-if (!['darwin', 'win32'].includes(process.platform)) {
-  console.log(`AutoTrace bundled runtime smoke skipped on ${target}.`);
-  process.exit(0);
+async function writeDiagnostics(status, extra = {}) {
+  await fs.writeFile(diagnosticsPath, `${JSON.stringify({
+    status,
+    target,
+    platform: process.platform,
+    arch: process.arch,
+    stage,
+    runtimeRoot,
+    executable,
+    manifest,
+    versionOutput,
+    traceOutput,
+    ...extra
+  }, null, 2)}\n`, 'utf8');
 }
 
-assert.equal(await exists(manifestPath), true, `Missing runtime manifest for ${target}`);
-assert.equal(await exists(executable), true, `Missing bundled AutoTrace executable for ${target}`);
-const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
-assert.equal(manifest.target, target);
-assert.equal(manifest.bundled, true, `${target} runtime must be bundled`);
+async function main() {
+  if (!['darwin', 'win32'].includes(process.platform)) {
+    stage = 'skip-unsupported-host';
+    await writeDiagnostics('skipped');
+    console.log(`AutoTrace bundled runtime smoke skipped on ${target}.`);
+    return;
+  }
 
-if (process.platform === 'darwin') {
-  assert.equal(manifest.relocatable, true, 'macOS runtime must be relocatable');
-  assert.ok(manifest.bundledLibraryCount > 0, 'macOS runtime must bundle dylibs');
-  const libraryDirectory = path.join(runtimeRoot, 'lib');
-  const libraries = (await fs.readdir(libraryDirectory))
-    .filter((name) => name.endsWith('.dylib'))
-    .map((name) => path.join(libraryDirectory, name));
-  assert.equal(libraries.length, manifest.bundledLibraryCount);
+  stage = 'read-manifest';
+  assert.equal(await exists(manifestPath), true, `Missing runtime manifest for ${target}`);
+  assert.equal(await exists(executable), true, `Missing bundled AutoTrace executable for ${target}`);
+  manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  assert.equal(manifest.target, target);
+  assert.equal(manifest.bundled, true, `${target} runtime must be bundled`);
 
-  for (const filePath of [executable, ...libraries]) {
-    const dependencies = run('otool', ['-L', filePath])
-      .split(/\r?\n/)
-      .slice(1)
-      .map((line) => line.trim().replace(/\s+\(compatibility version.*$/, ''))
-      .filter(Boolean);
-    const effectiveDependencies = filePath === executable ? dependencies : dependencies.slice(1);
-    for (const dependency of effectiveDependencies) {
-      const system = dependency.startsWith('/usr/lib/') || dependency.startsWith('/System/Library/');
-      assert.ok(system || dependency.startsWith('@loader_path/'), `${path.basename(filePath)} has non-relocatable dependency ${dependency}`);
-      assert.doesNotMatch(dependency, /homebrew|cellar|\/usr\/local\//i);
+  if (process.platform === 'darwin') {
+    stage = 'inspect-mach-o-dependencies';
+    assert.equal(manifest.relocatable, true, 'macOS runtime must be relocatable');
+    assert.ok(manifest.bundledLibraryCount > 0, 'macOS runtime must bundle dylibs');
+    const libraryDirectory = path.join(runtimeRoot, 'lib');
+    const libraries = (await fs.readdir(libraryDirectory))
+      .filter((name) => name.endsWith('.dylib'))
+      .map((name) => path.join(libraryDirectory, name));
+    assert.equal(libraries.length, manifest.bundledLibraryCount);
+
+    for (const filePath of [executable, ...libraries]) {
+      const dependencies = run('otool', ['-L', filePath])
+        .split(/\r?\n/)
+        .slice(1)
+        .map((line) => line.trim().replace(/\s+\(compatibility version.*$/, ''))
+        .filter(Boolean);
+      const effectiveDependencies = filePath === executable ? dependencies : dependencies.slice(1);
+      for (const dependency of effectiveDependencies) {
+        const system = dependency.startsWith('/usr/lib/') || dependency.startsWith('/System/Library/');
+        assert.ok(system || dependency.startsWith('@loader_path/'), `${path.basename(filePath)} has non-relocatable dependency ${dependency}`);
+        assert.doesNotMatch(dependency, /homebrew|cellar|\/usr\/local\//i);
+      }
     }
+  }
+
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'autotrace-bundled-smoke-'));
+  try {
+    const env = cleanEnvironment(workspace);
+    stage = 'version-probe';
+    const versionResult = spawnSync(executable, ['-version'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 15000,
+      env
+    });
+    versionOutput = `${versionResult.stdout || ''}\n${versionResult.stderr || ''}`.trim();
+    assert.equal(Boolean(versionResult.error), false, versionResult.error?.message);
+    assert.ok(versionResult.status === 0 || /autotrace/i.test(versionOutput), `AutoTrace version probe failed: ${versionOutput}`);
+
+    stage = 'ppm-to-svg-trace';
+    const inputPath = path.join(workspace, 'fixture.ppm');
+    const outputPath = path.join(workspace, 'fixture.svg');
+    await fs.writeFile(inputPath, ppmFixture());
+    traceOutput = run(executable, [
+      '-output-format', 'svg',
+      '-output-file', outputPath,
+      '-color-count', '2',
+      '-background-color', 'FFFFFF',
+      '-despeckle-level', '0',
+      inputPath
+    ], { env });
+    const svg = await fs.readFile(outputPath, 'utf8');
+    stage = 'validate-svg-output';
+    assert.match(svg, /<svg\b/i);
+    assert.match(svg, /<(?:path|polygon|polyline)\b/i);
+    await writeDiagnostics('success', { svgBytes: Buffer.byteLength(svg, 'utf8') });
+    console.log(`AutoTrace bundled runtime OK on ${target}: ${manifest.bundledLibraryCount ?? 'DLL'} dependencies, clean PATH trace succeeded.`);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
   }
 }
 
-const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'autotrace-bundled-smoke-'));
 try {
-  const env = cleanEnvironment(workspace);
-  const versionResult = spawnSync(executable, ['-version'], {
-    encoding: 'utf8',
-    windowsHide: true,
-    timeout: 15000,
-    env
+  await main();
+} catch (error) {
+  await writeDiagnostics('failure', {
+    error: error.message || String(error),
+    stack: error.stack || null,
+    command: error.command || null,
+    args: error.args || null,
+    statusCode: error.status ?? null,
+    commandOutput: error.output || null
   });
-  const versionOutput = `${versionResult.stdout || ''}\n${versionResult.stderr || ''}`;
-  assert.equal(Boolean(versionResult.error), false, versionResult.error?.message);
-  assert.ok(versionResult.status === 0 || /autotrace/i.test(versionOutput), `AutoTrace version probe failed: ${versionOutput}`);
-
-  const inputPath = path.join(workspace, 'fixture.ppm');
-  const outputPath = path.join(workspace, 'fixture.svg');
-  await fs.writeFile(inputPath, ppmFixture());
-  run(executable, [
-    '-output-format', 'svg',
-    '-output-file', outputPath,
-    '-color-count', '2',
-    '-background-color', 'FFFFFF',
-    '-despeckle-level', '0',
-    inputPath
-  ], { env });
-  const svg = await fs.readFile(outputPath, 'utf8');
-  assert.match(svg, /<svg\b/i);
-  assert.match(svg, /<path\b/i);
-  console.log(`AutoTrace bundled runtime OK on ${target}: ${manifest.bundledLibraryCount ?? 'DLL'} dependencies, clean PATH trace succeeded.`);
-} finally {
-  await fs.rm(workspace, { recursive: true, force: true });
+  console.error(`AutoTrace runtime smoke failed at ${stage}: ${error.stack || error}`);
+  process.exitCode = 1;
 }
