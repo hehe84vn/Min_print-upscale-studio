@@ -1,4 +1,4 @@
-name: Build Print Upscale Studio V2.9.3 Curve-Safe Vector Router
+name: Build Print Upscale Studio V2.9.4 Bundled AutoTrace Runtime
 
 on:
   workflow_dispatch:
@@ -33,7 +33,7 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Run V2.9.3 curve and palette quality checks
+      - name: Run V2.9.4 syntax and fallback checks
         run: npm run check
 
   build-windows:
@@ -49,28 +49,28 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Prepare official AutoTrace Windows x64 runtime
+      - name: Bundle official AutoTrace Windows x64 runtime
         run: npm run autotrace:prepare -- --platform win32 --arch x64 --strict
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Run curve-safe smoke tests with AutoTrace candidate
+      - name: Run clean-machine AutoTrace and vector smoke tests
         run: npm run test:smoke
-      - name: Build Windows V2.9.3 installers
+      - name: Build Windows V2.9.4 installers and verify packaged runtime
         run: npm run dist:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Upload Windows V2.9.3 installers
+      - name: Upload Windows V2.9.4 installers
         uses: actions/upload-artifact@v4
         with:
-          name: print-upscale-studio-v2.9.3-windows-x64
+          name: print-upscale-studio-v2.9.4-windows-x64
           path: release/*.exe
           if-no-files-found: error
 
   build-macos-arm64:
     needs: validate
     runs-on: macos-15
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -80,28 +80,28 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Install AutoTrace through Homebrew
+      - name: Install AutoTrace build source through Homebrew
         run: brew install autotrace
-      - name: Prepare AutoTrace Apple Silicon runtime metadata
+      - name: Bundle relocatable AutoTrace Apple Silicon runtime and dylibs
         run: npm run autotrace:prepare -- --platform darwin --arch arm64 --strict
-      - name: Run curve-safe smoke tests with AutoTrace candidate
+      - name: Run clean-machine AutoTrace and vector smoke tests
         run: npm run test:smoke
-      - name: Build macOS Apple Silicon V2.9.3 DMG
+      - name: Build macOS Apple Silicon V2.9.4 DMG and verify packaged runtime
         run: npm run dist:mac:arm64
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Upload macOS Apple Silicon V2.9.3 DMG
+      - name: Upload macOS Apple Silicon V2.9.4 DMG
         uses: actions/upload-artifact@v4
         with:
-          name: print-upscale-studio-v2.9.3-macos-arm64
+          name: print-upscale-studio-v2.9.4-macos-arm64
           path: release/*.dmg
           if-no-files-found: error
 
   build-macos-x64:
     needs: validate
     runs-on: macos-15-intel
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -111,21 +111,21 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Install AutoTrace through Homebrew
+      - name: Install AutoTrace build source through Homebrew
         run: brew install autotrace
-      - name: Prepare AutoTrace Intel runtime metadata
+      - name: Bundle relocatable AutoTrace Intel runtime and dylibs
         run: npm run autotrace:prepare -- --platform darwin --arch x64 --strict
-      - name: Run curve-safe smoke tests with AutoTrace candidate
+      - name: Run clean-machine AutoTrace and vector smoke tests
         run: npm run test:smoke
-      - name: Build macOS Intel V2.9.3 DMG
+      - name: Build macOS Intel V2.9.4 DMG and verify packaged runtime
         run: npm run dist:mac:x64
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Upload macOS Intel V2.9.3 DMG
+      - name: Upload macOS Intel V2.9.4 DMG
         uses: actions/upload-artifact@v4
         with:
-          name: print-upscale-studio-v2.9.3-macos-x64
+          name: print-upscale-studio-v2.9.4-macos-x64
           path: release/*.dmg
           if-no-files-found: error
 
