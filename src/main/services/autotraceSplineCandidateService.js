@@ -92,45 +92,69 @@ function countUniqueRgb(data, channels = 3, stopAfter = 257) {
   return colors.size;
 }
 
-async function prepareFlatPalettePpm(inputPath, outputPath, options = {}) {
+async function quantizedPalette(inputPath, options = {}) {
   const metadata = await sharp(inputPath, { failOn: 'none' }).metadata();
   if (!metadata.width || !metadata.height) throw new Error('Không đọc được kích thước artwork màu cho AutoTrace.');
   const trace = vectorEngine.traceDimensions(metadata.width, metadata.height, { allowUpscale: false });
   const colorCount = clampColorCount(options.paletteColors, 12);
-  const quantizedPng = await sharp(inputPath, { failOn: 'none' })
+  const png = await sharp(inputPath, { failOn: 'none' })
     .rotate()
     .flatten({ background: '#ffffff' })
     .resize(trace.width, trace.height, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
     .removeAlpha()
     .png({ palette: true, colours: colorCount, dither: 0, effort: 10, compressionLevel: 7 })
     .toBuffer();
-  const raw = await sharp(quantizedPng, { failOn: 'none' })
+  const raw = await sharp(png, { failOn: 'none' })
     .removeAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
-  const pixels = rgbBuffer(raw.data, raw.info);
-  const actualPaletteColors = countUniqueRgb(pixels, 3, colorCount + 2);
-  const header = Buffer.from(`P6\n${raw.info.width} ${raw.info.height}\n255\n`, 'ascii');
+  const actualPaletteColors = countUniqueRgb(rgbBuffer(raw.data, raw.info), 3, colorCount + 2);
+  return { metadata, trace, colorCount, png, raw, actualPaletteColors };
+}
+
+async function prepareFlatPalettePng(inputPath, outputPath, options = {}) {
+  const prepared = await quantizedPalette(inputPath, options);
+  await fs.writeFile(outputPath, prepared.png);
+  return {
+    width: prepared.metadata.width,
+    height: prepared.metadata.height,
+    traceWidth: prepared.raw.info.width,
+    traceHeight: prepared.raw.info.height,
+    traceScale: prepared.trace.scale,
+    format: prepared.metadata.format || path.extname(inputPath).slice(1),
+    inputFormat: 'png-palette',
+    cliInputHandler: 'png',
+    background: 'FFFFFF',
+    requestedPaletteColors: prepared.colorCount,
+    actualPaletteColors: prepared.actualPaletteColors,
+    quantization: 'sharp-palette-no-dither'
+  };
+}
+
+async function prepareFlatPalettePpm(inputPath, outputPath, options = {}) {
+  const prepared = await quantizedPalette(inputPath, options);
+  const pixels = rgbBuffer(prepared.raw.data, prepared.raw.info);
+  const header = Buffer.from(`P6\n${prepared.raw.info.width} ${prepared.raw.info.height}\n255\n`, 'ascii');
   await fs.writeFile(outputPath, Buffer.concat([header, pixels]));
   return {
-    width: metadata.width,
-    height: metadata.height,
-    traceWidth: raw.info.width,
-    traceHeight: raw.info.height,
-    traceScale: trace.scale,
-    format: metadata.format || path.extname(inputPath).slice(1),
+    width: prepared.metadata.width,
+    height: prepared.metadata.height,
+    traceWidth: prepared.raw.info.width,
+    traceHeight: prepared.raw.info.height,
+    traceScale: prepared.trace.scale,
+    format: prepared.metadata.format || path.extname(inputPath).slice(1),
     inputFormat: 'ppm-p6',
     cliInputHandler: 'pnm',
     background: 'FFFFFF',
-    requestedPaletteColors: colorCount,
-    actualPaletteColors,
+    requestedPaletteColors: prepared.colorCount,
+    actualPaletteColors: prepared.actualPaletteColors,
     quantization: 'sharp-palette-no-dither'
   };
 }
 
 async function runAutoTraceSpline({ binaryPath, inputPath, outputPath, params }) {
   const args = [
-    '-input-format', 'pnm',
+    '-input-format', params.inputFormat || 'png',
     '-output-format', 'svg',
     '-output-file', outputPath,
     '-color-count', String(params.colorCount),
@@ -170,13 +194,13 @@ async function runAutoTraceSpline({ binaryPath, inputPath, outputPath, params })
 async function buildAutoTraceColorCandidate({ inputPath, options = {}, onProgress }) {
   const runtime = requireAutoTraceRuntime();
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'print-autotrace-spline-'));
-  const ppmPath = path.join(workspace, 'flat-palette-source.ppm');
+  const palettePath = path.join(workspace, 'flat-palette-source.png');
   const svgPath = path.join(workspace, 'autotrace-spline.svg');
   try {
     const preset = presetForStrategy(options.strategy);
     const colorCount = clampColorCount(options.paletteColors, preset.defaultColors);
     onProgress?.(56, `AutoTrace: lượng tử hóa ${colorCount} màu phẳng bằng Sharp`);
-    const source = await prepareFlatPalettePpm(inputPath, ppmPath, { paletteColors: colorCount });
+    const source = await prepareFlatPalettePng(inputPath, palettePath, { paletteColors: colorCount });
     const params = {
       colorCount,
       backgroundColor: 'FFFFFF',
@@ -197,7 +221,7 @@ async function buildAutoTraceColorCandidate({ inputPath, options = {}, onProgres
     onProgress?.(64, 'AutoTrace: đang fit spline trên palette phẳng');
     const execution = await runAutoTraceSpline({
       binaryPath: runtime.binaryPath,
-      inputPath: ppmPath,
+      inputPath: palettePath,
       outputPath: svgPath,
       params
     });
@@ -247,6 +271,7 @@ module.exports = {
   buildAutoTraceColorCandidate,
   clampColorCount,
   countUniqueRgb,
+  prepareFlatPalettePng,
   prepareFlatPalettePpm,
   presetForStrategy,
   rgbBuffer,
