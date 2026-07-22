@@ -41,27 +41,49 @@ function packagedCandidates(platform, arch) {
   ]);
 }
 
-function probeAutoTrace(binaryPath, { timeout = 5000 } = {}) {
-  const isPath = path.isAbsolute(binaryPath) || binaryPath.includes(path.sep) || binaryPath.includes('/');
-  if (isPath && !fs.existsSync(binaryPath)) {
-    return { available: false, binaryPath, error: 'file-not-found' };
-  }
-
-  const result = spawnSync(binaryPath, ['-version'], {
+function runProbe(binaryPath, args, timeout) {
+  const result = spawnSync(binaryPath, args, {
     encoding: 'utf8',
     windowsHide: true,
     timeout
   });
   const output = `${result.stdout || ''}\n${result.stderr || ''}`.trim();
-  const versionMatch = output.match(/(?:AutoTrace\s*)?(\d+\.\d+(?:\.\d+)?)/i);
-  const available = !result.error && (result.status === 0 || /autotrace/i.test(output));
+  return {
+    args,
+    output,
+    status: result.status,
+    signal: result.signal || null,
+    error: result.error?.message || null,
+    succeeded: !result.error && result.status === 0
+  };
+}
+
+function probeAutoTrace(binaryPath, { timeout = 5000 } = {}) {
+  const isPath = path.isAbsolute(binaryPath) || binaryPath.includes(path.sep) || binaryPath.includes('/');
+  if (isPath && !fs.existsSync(binaryPath)) {
+    return { available: false, binaryPath, error: 'file-not-found', attempts: [] };
+  }
+
+  const attempts = [
+    runProbe(binaryPath, ['-version'], timeout),
+    runProbe(binaryPath, ['--version'], timeout),
+    runProbe(binaryPath, ['-list-output-formats'], timeout)
+  ];
+  const selected = attempts.find((attempt) => attempt.succeeded)
+    || attempts.find((attempt) => /autotrace|\bsvg\b|\beps\b/i.test(attempt.output));
+  const combinedOutput = attempts.map((attempt) => attempt.output).filter(Boolean).join('\n');
+  const versionMatch = combinedOutput.match(/(?:AutoTrace\s*(?:version)?\s*)?(\d+\.\d+(?:\.\d+)?)/i);
+  const available = Boolean(selected && !selected.error);
+
   return {
     available,
     binaryPath,
     version: versionMatch?.[1] || null,
-    output,
-    status: result.status,
-    error: result.error?.message || null
+    output: selected?.output || combinedOutput,
+    status: selected?.status ?? attempts.at(-1)?.status ?? null,
+    error: available ? null : attempts.find((attempt) => attempt.error)?.error || null,
+    probeArgs: selected?.args || null,
+    attempts
   };
 }
 
@@ -87,7 +109,9 @@ function detectAutoTraceRuntime({
         version: null,
         output: '',
         status: null,
-        error: null
+        error: null,
+        probeArgs: null,
+        attempts: []
       };
       if (result.available) {
         selected = result;
@@ -115,6 +139,7 @@ function detectAutoTraceRuntime({
     binaryPath: selected?.binaryPath || null,
     source: packaged ? 'packaged-resources' : repositoryRuntime ? 'vendor-runtime' : selected ? 'system-path' : null,
     version: selected?.version || null,
+    probeArgs: selected?.probeArgs || null,
     packageLicense: 'GPL-2.0-or-later',
     libraryLicense: 'LGPL-2.1-or-later',
     upstream: 'https://github.com/autotrace/autotrace',
@@ -123,7 +148,7 @@ function detectAutoTraceRuntime({
       ? null
       : !supportedTarget
         ? `AutoTrace runtime target không được hỗ trợ: ${target}.`
-        : `Không tìm thấy AutoTrace executable cho ${target}. Đã kiểm tra packaged resources, vendor runtime và PATH.`
+        : `Không tìm thấy AutoTrace executable hoạt động cho ${target}. Đã kiểm tra packaged resources, vendor runtime và PATH.`
   };
 }
 
@@ -145,5 +170,6 @@ module.exports = {
   executableName,
   packagedCandidates,
   probeAutoTrace,
-  requireAutoTraceRuntime
+  requireAutoTraceRuntime,
+  runProbe
 };
