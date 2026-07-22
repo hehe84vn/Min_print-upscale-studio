@@ -1,12 +1,12 @@
 (() => {
   const STATUS_LABELS = {
     pass: 'PASS',
-    warning: 'WARNING',
-    fail: 'FAIL',
+    warning: 'REVIEW',
+    fail: 'RISK',
     skipped: 'N/A'
   };
 
-  function installPhase4Styles() {
+  function installQualityStyles() {
     if ($('preflightPhaseStyles')) return;
     const style = document.createElement('style');
     style.id = 'preflightPhaseStyles';
@@ -27,19 +27,13 @@
       .preflight-result-row.pass time { color: #bfff79; }
       .preflight-result-row.warning time { color: #ffd37b; }
       .preflight-result-row.fail time { color: #ff9da7; }
+      .cmyk-result-row { border-left: 3px solid #517dcc; background: #111925; }
+      .cmyk-result-row time { color: #a9c8ff; font-weight: 800; }
     `;
     document.head.append(style);
   }
 
-  function installPhase4Controls() {
-    document.title = 'Print Upscale Studio V2.4 Packaging Preflight';
-    const brandVersion = document.querySelector('.brand span');
-    if (brandVersion) brandVersion.textContent = 'Studio V2.4 · Packaging Preflight';
-    const labNotice = document.querySelector('#benchmarkSettings .lab-notice');
-    if (labNotice) {
-      labNotice.innerHTML = '<b>Packaging Safe Pro V0.4 · Auto Validation</b><span>Tự kiểm tra QR/barcode, màu, hình học, text/logo, halo và mức phủ mask cho từng kết quả.</span>';
-    }
-
+  function installQualityControls() {
     const protectionToggle = document.querySelector('.benchmark-protection-toggle');
     if (!protectionToggle) return;
 
@@ -55,13 +49,13 @@
     }
 
     if (!$('preflightEnabled')) {
-      const preflightToggle = document.createElement('label');
-      preflightToggle.className = 'check-row preflight-toggle';
-      preflightToggle.innerHTML = '<input id="preflightEnabled" type="checkbox" checked /><span>Packaging Preflight & Auto Validation</span>';
-      $('semanticGuardControls').insertAdjacentElement('afterend', preflightToggle);
+      const qualityToggle = document.createElement('label');
+      qualityToggle.className = 'check-row preflight-toggle';
+      qualityToggle.innerHTML = '<input id="preflightEnabled" type="checkbox" checked /><span>Upscale Quality Check</span>';
+      $('semanticGuardControls').insertAdjacentElement('afterend', qualityToggle);
     }
 
-    installPhase4Styles();
+    installQualityStyles();
   }
 
   function syncProtectionControls() {
@@ -97,13 +91,13 @@
     return STATUS_LABELS[metric?.status] || 'N/A';
   }
 
-  function preflightDetail(preflight) {
-    if (!preflight) return 'Preflight không được bật.';
-    if (preflight.error) return `Preflight lỗi: ${preflight.error}`;
-    const metrics = preflight.metrics || {};
+  function qualityDetail(check) {
+    if (!check) return 'Quality Check không được bật.';
+    if (check.error) return `Quality Check lỗi: ${check.error}`;
+    const metrics = check.metrics || {};
     const parts = [];
     if (metrics.barcode?.status !== 'skipped') parts.push(`Code ${metricStatus(metrics.barcode)}`);
-    if (metrics.color) parts.push(`Màu ΔE ${metrics.color.meanDeltaE76 ?? '—'} · ${metricStatus(metrics.color)}`);
+    if (metrics.color) parts.push(`RGB ΔE ${metrics.color.meanDeltaE76 ?? '—'} · ${metricStatus(metrics.color)}`);
     if (metrics.geometry) parts.push(`Hình học ${metrics.geometry.agreementPercent ?? '—'}% · ${metricStatus(metrics.geometry)}`);
     if (metrics.textLogo?.status !== 'skipped') parts.push(`Text/Logo ${metrics.textLogo.agreementPercent ?? '—'}% · ${metricStatus(metrics.textLogo)}`);
     if (metrics.halo) parts.push(`Halo ${metrics.halo.edgeGainP90 ?? '—'}×/${metrics.halo.ringingPercent ?? '—'}% · ${metricStatus(metrics.halo)}`);
@@ -114,6 +108,24 @@
   async function appendMaskItem(items, label, pathValue, id) {
     if (!pathValue) return;
     items.push(await benchmarkItem(label, pathValue, id));
+  }
+
+  function appendCmykRow(resultList, result) {
+    if (!result.cmykOutput) return;
+    const row = document.createElement('div');
+    row.className = `benchmark-result-row cmyk-result-row${result.cmykOutput.error ? ' error' : ''}`;
+    const info = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = 'CMYK TIFF Copy';
+    const detail = document.createElement('small');
+    detail.textContent = result.cmykOutput.error
+      ? `Không tạo được CMYK: ${result.cmykOutput.error}`
+      : `${result.cmykOutput.profile?.label || 'ICC profile'} · TIFF 8-bit LZW · ${result.cmykOutput.outputPath}`;
+    info.append(title, detail);
+    const value = document.createElement('time');
+    value.textContent = result.cmykOutput.error ? 'ERROR' : 'CMYK';
+    row.append(info, value);
+    resultList.append(row);
   }
 
   renderBenchmarkResults = async function renderProtectedBenchmarkResults(runResult) {
@@ -174,6 +186,7 @@
         }
         const codeText = barcodeStatusText(result.barcodeGuard);
         if (codeText) parts.push(codeText);
+        if (result.cmykOutput?.outputPath) parts.push('CMYK copy đã tạo');
         detail.textContent = parts.join(' · ');
       }
       info.append(titleLine, detail);
@@ -184,24 +197,26 @@
       resultList.append(row);
 
       if (result.preflight) {
-        const preflightRow = document.createElement('div');
+        const qualityRow = document.createElement('div');
         const status = STATUS_LABELS[result.preflight.status] ? result.preflight.status : 'warning';
-        preflightRow.className = `benchmark-result-row preflight-result-row ${status}`;
-        preflightRow.dataset.itemId = result.id;
-        const preflightInfo = document.createElement('div');
-        const preflightTitleLine = document.createElement('div');
-        preflightTitleLine.className = 'result-title-line';
-        const preflightTitle = document.createElement('strong');
-        preflightTitle.textContent = 'Packaging Preflight';
-        preflightTitleLine.append(preflightTitle, statusBadge(status));
-        const preflightText = document.createElement('small');
-        preflightText.textContent = preflightDetail(result.preflight);
-        preflightInfo.append(preflightTitleLine, preflightText);
+        qualityRow.className = `benchmark-result-row preflight-result-row ${status}`;
+        qualityRow.dataset.itemId = result.id;
+        const qualityInfo = document.createElement('div');
+        const qualityTitleLine = document.createElement('div');
+        qualityTitleLine.className = 'result-title-line';
+        const qualityTitle = document.createElement('strong');
+        qualityTitle.textContent = 'Upscale Quality Check';
+        qualityTitleLine.append(qualityTitle, statusBadge(status));
+        const qualityText = document.createElement('small');
+        qualityText.textContent = qualityDetail(result.preflight);
+        qualityInfo.append(qualityTitleLine, qualityText);
         const score = document.createElement('time');
         score.textContent = Number.isFinite(result.preflight.score) ? `${result.preflight.score}/100` : 'CHECK';
-        preflightRow.append(preflightInfo, score);
-        resultList.append(preflightRow);
+        qualityRow.append(qualityInfo, score);
+        resultList.append(qualityRow);
       }
+
+      appendCmykRow(resultList, result);
 
       const maskRows = [
         {
@@ -268,7 +283,11 @@
       protectionSensitivity: Number($('protectionSensitivity').value),
       semanticProtectionEnabled: $('semanticProtectionEnabled').checked,
       codeGuardEnabled: $('codeGuardEnabled').checked,
-      preflightEnabled: $('preflightEnabled').checked
+      preflightEnabled: $('preflightEnabled').checked,
+      cmykOutputEnabled: Boolean($('modelLabCmykEnabled')?.checked),
+      colorOutputSettings: {
+        profileId: $('modelLabColorProfile')?.value || 'iso-coated-v2'
+      }
     });
 
     state.benchmark.sessionDirectory = result.outputDirectory;
@@ -281,15 +300,19 @@
     const maskMessage = hybrid ? ` Refined mask phủ ${hybrid.protection.coveragePercent}% ảnh.` : '';
     const codeMessage = barcodeStatusText(hybrid?.barcodeGuard);
     const guardMessage = codeMessage ? ` Code Guard: ${codeMessage}.` : '';
-    const summary = result.preflightSummary || { pass: 0, warning: 0, fail: 0 };
-    const preflightMessage = $('preflightEnabled').checked
-      ? ` Preflight: ${summary.pass} PASS · ${summary.warning} WARNING · ${summary.fail} FAIL.`
+    const summary = result.qualityCheckSummary || result.preflightSummary || { pass: 0, warning: 0, fail: 0 };
+    const qualityMessage = $('preflightEnabled').checked
+      ? ` Quality Check: ${summary.pass} PASS · ${summary.warning} REVIEW · ${summary.fail} RISK.`
       : '';
-    const hasFail = summary.fail > 0;
+    const cmyk = result.cmykSummary || { success: 0, failed: 0 };
+    const cmykMessage = $('modelLabCmykEnabled')?.checked
+      ? ` CMYK: ${cmyk.success} thành công${cmyk.failed ? ` · ${cmyk.failed} lỗi` : ''}.`
+      : '';
+    const hasFail = summary.fail > 0 || cmyk.failed > 0;
     $('resultBox').classList.toggle('error', successCount === 0 || hasFail);
     $('resultBox').textContent = errorCount
-      ? `Model Lab hoàn tất ${successCount}/${result.results.length} kết quả. Có ${errorCount} model lỗi.${maskMessage}${guardMessage}${preflightMessage} Đã lưu tại: ${result.outputDirectory}`
-      : `Model Lab hoàn tất ${successCount} kết quả.${maskMessage}${guardMessage}${preflightMessage} Đã lưu tại: ${result.outputDirectory}`;
+      ? `Model Lab hoàn tất ${successCount}/${result.results.length} kết quả. Có ${errorCount} model lỗi.${maskMessage}${guardMessage}${qualityMessage}${cmykMessage} Đã lưu tại: ${result.outputDirectory}`
+      : `Model Lab hoàn tất ${successCount} kết quả.${maskMessage}${guardMessage}${qualityMessage}${cmykMessage} Đã lưu tại: ${result.outputDirectory}`;
     $('resultBox').hidden = false;
   };
 
@@ -301,7 +324,7 @@
     $('engineDot').classList.toggle('online', ready);
     $('engineStatus').textContent = ready
       ? labReady
-        ? 'Sẵn sàng · Mask Refinement + Packaging Preflight.'
+        ? 'Sẵn sàng · Refined Mask + Quality Check + CMYK Output.'
         : 'Sẵn sàng xử lý local. Thiếu RealESRGAN Detail.'
       : 'Chế độ tương thích đang khả dụng.';
 
@@ -320,7 +343,7 @@
     });
   };
 
-  installPhase4Controls();
+  installQualityControls();
   $('protectionEnabled').addEventListener('change', syncProtectionControls);
   bindRange('protectionSensitivity', 'protectionSensitivityValue');
   syncProtectionControls();
