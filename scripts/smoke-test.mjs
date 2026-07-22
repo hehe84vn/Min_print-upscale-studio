@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -8,6 +8,13 @@ const sharp = require('sharp');
 const { inspectImage, processImage } = require('../src/main/services/imageService');
 const { buildPrompt } = require('../src/main/services/aiProviderService');
 const { listPresets } = require('../src/main/services/benchmarkService');
+const { normalizeSettings: normalizeColorSettings } = require('../src/main/services/colorOutputService');
+const {
+  cleanupOwnedTemp,
+  configureSharpCache,
+  isOwnedTempName,
+  listOwnedTemp
+} = require('../src/main/services/storageHygieneService');
 const { EXPERIMENTAL_MODELS } = require('../src/main/services/engineService');
 const { createBarcodeMask, decodeBarcode } = require('../src/main/services/barcodeGuardService');
 const {
@@ -62,6 +69,44 @@ const workspace = await mkdtemp(path.join(os.tmpdir(), 'print-upscale-studio-'))
 const inputPath = path.join(workspace, 'input.png');
 
 try {
+  const colorSettings = normalizeColorSettings({
+    outputMode: 'rgb-cmyk',
+    profileId: 'pso-coated-v3',
+    renderingIntent: 'relative',
+    blackPointCompensation: true
+  });
+  if (colorSettings.outputMode !== 'rgb-cmyk' || colorSettings.profileId !== 'pso-coated-v3' || colorSettings.bitDepth !== 8) {
+    throw new Error('CMYK output settings normalization failed.');
+  }
+  console.log(`CMYK settings OK: ${colorSettings.profileId}`);
+
+  const tempRoot = path.join(workspace, 'temp-root');
+  const orphanDirectory = path.join(tempRoot, 'print-ai-enhance-orphan');
+  const unrelatedDirectory = path.join(tempRoot, 'do-not-delete');
+  await mkdir(orphanDirectory, { recursive: true });
+  await mkdir(unrelatedDirectory, { recursive: true });
+  await writeFile(path.join(orphanDirectory, 'cloud-input.png'), Buffer.alloc(256, 1));
+  await writeFile(path.join(unrelatedDirectory, 'keep.txt'), 'keep', 'utf8');
+  if (!isOwnedTempName(path.basename(orphanDirectory)) || isOwnedTempName(path.basename(unrelatedDirectory))) {
+    throw new Error('Temp ownership prefix matching is unsafe.');
+  }
+  const ownedBefore = await listOwnedTemp({ tempRoot });
+  if (ownedBefore.length !== 1) throw new Error(`Expected one owned temp entry, found ${ownedBefore.length}.`);
+  const cleanup = await cleanupOwnedTemp({ tempRoot, olderThanHours: 0 });
+  if (cleanup.removedCount !== 1 || cleanup.removedBytes < 256) {
+    throw new Error(`Storage cleanup returned an unexpected result: ${JSON.stringify(cleanup)}`);
+  }
+  try {
+    await access(path.join(unrelatedDirectory, 'keep.txt'));
+  } catch {
+    throw new Error('Storage cleanup deleted an unrelated directory.');
+  }
+  const sharpCache = configureSharpCache();
+  if (sharpCache.files?.max !== 0 || sharpCache.memory?.max > 128) {
+    throw new Error(`Sharp cache limits are incorrect: ${JSON.stringify(sharpCache)}`);
+  }
+  console.log(`Storage hygiene OK: removed ${cleanup.removedCount} owned temp entry`);
+
   await sharp(sourceSvg).png().toFile(inputPath);
 
   const metadata = await inspectImage(inputPath);
@@ -172,9 +217,9 @@ try {
     || !preflight.metrics?.geometry
     || !preflight.metrics?.halo
   ) {
-    throw new Error(`Packaging Preflight returned an invalid result: ${JSON.stringify(preflight)}`);
+    throw new Error(`Upscale Quality Check returned an invalid result: ${JSON.stringify(preflight)}`);
   }
-  console.log(`Packaging Preflight OK: ${preflight.status.toUpperCase()} ${preflight.score}/100`);
+  console.log(`Upscale Quality Check OK: ${preflight.status.toUpperCase()} ${preflight.score}/100`);
 
   const barcodePath = path.join(workspace, 'invalid-barcode-artwork.png');
   await sharp(invalidBarcodeArtwork()).png().toFile(barcodePath);
