@@ -6,6 +6,7 @@ const path = require('node:path');
 const sharp = require('sharp');
 const { compareBinaryComponents } = require('./binaryShapeReconstruction');
 const { inspectSvgComplexity } = require('./vectorLogoEngine');
+const { detectPotraceRuntime } = require('./potraceRuntimeService');
 const {
   buildPotraceCandidate,
   selectedPotracePresets
@@ -117,7 +118,15 @@ function rankCandidates(candidates) {
 async function vectorizeMonochromeWithPotrace({ inputPath, outputPath, options = {}, sourceAnalysis, onProgress }) {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'print-potrace-'));
   const binaryPath = path.join(workspace, 'potrace-source.png');
+  const detectedRuntime = detectPotraceRuntime();
   try {
+    if (!detectedRuntime.available) {
+      const error = new Error(detectedRuntime.missingReason || 'Potrace runtime không khả dụng.');
+      error.code = detectedRuntime.supportedTarget ? 'POTRACE_RUNTIME_MISSING' : 'POTRACE_RUNTIME_UNSUPPORTED';
+      error.runtime = detectedRuntime;
+      throw error;
+    }
+
     onProgress?.(10, 'Đang chuẩn hóa ảnh đơn sắc cho Potrace');
     const source = await prepareBinarySource(inputPath, binaryPath, sourceAnalysis, options);
     const reference = await buildReference(binaryPath);
@@ -138,15 +147,16 @@ async function vectorizeMonochromeWithPotrace({ inputPath, outputPath, options =
           assessSvg: (svg) => assessCandidate(svg, reference)
         }));
       } catch (error) {
-        candidateErrors.push({ id: preset.id, error: error.message || String(error) });
+        candidateErrors.push({ id: preset.id, code: error.code || null, error: error.message || String(error) });
       }
     }
 
     if (!candidates.length) {
       const error = new Error(`Potrace không tạo được candidate. ${candidateErrors.map((item) => `${item.id}: ${item.error}`).join(' | ')}`);
-      error.code = candidateErrors.some((item) => item.error.includes('runtime chưa được cài'))
+      error.code = candidateErrors.some((item) => item.code === 'POTRACE_RUNTIME_MISSING')
         ? 'POTRACE_RUNTIME_MISSING'
         : 'POTRACE_FAILED';
+      error.runtime = detectedRuntime;
       throw error;
     }
 
@@ -164,14 +174,16 @@ async function vectorizeMonochromeWithPotrace({ inputPath, outputPath, options =
 
     const reportPath = path.join(path.dirname(outputPath), `${path.parse(outputPath).name}.vector-report.json`);
     const report = {
-      schemaVersion: 5,
+      schemaVersion: 6,
       createdAt: new Date().toISOString(),
       inputPath,
       outputPath,
       engineRouter: {
         selectedEngine: 'potrace',
+        actualEngine: selected.trace.engine,
         fallbackEngine: 'vtracer',
-        sourceType: 'monochrome'
+        sourceType: 'monochrome',
+        runtime: selected.trace.runtime || detectedRuntime
       },
       requestedColorMode: options.colorMode || 'color',
       effectiveColorMode: 'binary',
@@ -179,6 +191,8 @@ async function vectorizeMonochromeWithPotrace({ inputPath, outputPath, options =
       threshold: source.threshold,
       source: { ...source, analysis: sourceAnalysis || null },
       selectedCandidate: selected.id,
+      selectedPreset: selected.label,
+      selectedParameters: selected.trace,
       selectedScore: selected.score,
       qualityGate: {
         status: warnings.length ? 'review' : 'pass',
@@ -190,7 +204,7 @@ async function vectorizeMonochromeWithPotrace({ inputPath, outputPath, options =
       warnings,
       candidates: ranked.map(({ svg, ...candidate }) => candidate),
       candidateErrors,
-      licenseNotice: 'Potrace-compatible Node engine is GPL-2.0. Review distribution licensing before commercial release.'
+      licenseNotice: detectedRuntime.distributionNotice
     };
     await fs.writeFile(reportPath, JSON.stringify(report, null, 2), 'utf8');
     onProgress?.(100, `Hoàn tất · ${selected.label} · IoU ${selected.metrics.foregroundIoU}% · khoảng ${selected.metrics.nodeEstimate} node`);
