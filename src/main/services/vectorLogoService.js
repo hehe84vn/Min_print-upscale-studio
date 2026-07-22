@@ -5,6 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const sharp = require('sharp');
 const engine = require('./vectorLogoEngine');
+const { vectorizeMonochromeWithPotrace } = require('./potraceSmartService');
 const {
   analyzeVectorInput,
   formatVectorInputRejection
@@ -184,6 +185,26 @@ async function attachInputQuality(result, inputPath, inputQuality, backgroundCle
   return result;
 }
 
+async function runVTracerFallback(payload, options, sourceAnalysis, fallbackError = null) {
+  const result = await engine.vectorizeLogo({
+    ...payload,
+    options: { ...options, sourceAnalysis }
+  });
+  if (fallbackError) {
+    result.vectorReport.engineRouter = {
+      selectedEngine: 'vtracer',
+      attemptedEngine: 'potrace',
+      sourceType: 'monochrome',
+      fallbackReason: fallbackError.message || String(fallbackError)
+    };
+    result.vectorReport.warnings = [
+      `Potrace không chạy được; đã fallback sang VTracer: ${fallbackError.message || String(fallbackError)}`,
+      ...(result.vectorReport.warnings || [])
+    ];
+  }
+  return result;
+}
+
 async function vectorizeLogo(payload) {
   const options = payload.options || {};
   payload.onProgress?.(2, 'Đang kiểm tra chất lượng ảnh đầu vào');
@@ -198,15 +219,28 @@ async function vectorizeLogo(payload) {
   const sourceAnalysis = await engine.analyzeMonochromeSource(payload.inputPath);
   const forcedBinary = options.colorMode === 'binary';
   const useGeometrySource = forcedBinary || sourceAnalysis.isMonochrome;
+
+  if (useGeometrySource && options.vectorEngine !== 'vtracer') {
+    try {
+      const result = await vectorizeMonochromeWithPotrace({
+        ...payload,
+        options,
+        sourceAnalysis
+      });
+      return attachInputQuality(result, payload.inputPath, inputQuality);
+    } catch (error) {
+      payload.onProgress?.(12, 'Potrace không khả dụng, đang fallback sang VTracer');
+      const result = await runVTracerFallback(payload, options, sourceAnalysis, error);
+      return attachInputQuality(result, payload.inputPath, inputQuality);
+    }
+  }
+
   const shouldCleanup = !useGeometrySource
     && options.backgroundCleanup !== false
     && options.colorMode !== 'binary';
 
   if (!shouldCleanup) {
-    const result = await engine.vectorizeLogo({
-      ...payload,
-      options: { ...options, sourceAnalysis }
-    });
+    const result = await runVTracerFallback(payload, options, sourceAnalysis);
     return attachInputQuality(result, payload.inputPath, inputQuality);
   }
 
