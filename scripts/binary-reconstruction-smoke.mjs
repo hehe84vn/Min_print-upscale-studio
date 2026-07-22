@@ -38,8 +38,8 @@ try {
   assert.doesNotMatch(reconstruction.svg, /[CQTA]/);
   assert.ok(reconstruction.stats.loopCount >= 5);
   assert.ok(reconstruction.stats.simplifiedNodes < reconstruction.stats.sourceNodes);
-  assert.ok(reconstruction.stats.horizontalSnaps > 0);
-  assert.ok(reconstruction.stats.verticalSnaps > 0);
+  assert.ok(reconstruction.stats.rectilinearLoops >= 3);
+  assert.ok(reconstruction.stats.nodeReductionPercent > 80);
 
   const source = await sharp(sourcePath).grayscale().raw().toBuffer({ resolveWithObject: true });
   const rendered = await sharp(Buffer.from(reconstruction.svg))
