@@ -30,17 +30,82 @@ function unique(values) {
   return [...new Set(values.filter(Boolean).map((value) => String(value)))];
 }
 
-function packagedCandidates(platform, arch) {
-  const executable = executableName(platform);
+function runtimeRoots(platform = process.platform, arch = process.arch) {
   const target = currentTarget(platform, arch);
-  const resourcesPath = process.resourcesPath || null;
   const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
   return unique([
+    process.resourcesPath && path.join(process.resourcesPath, 'autotrace-runtime'),
+    path.join(repositoryRoot, 'vendor', 'autotrace', target)
+  ]);
+}
+
+function readRuntimeManifest(root) {
+  if (!root) return null;
+  try {
+    return JSON.parse(fs.readFileSync(path.join(root, 'runtime.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function manifestExecutable(root, platform = process.platform) {
+  const manifest = readRuntimeManifest(root);
+  const relative = manifest?.runtimeLayout?.executable;
+  if (relative) return path.join(root, ...String(relative).split('/'));
+  const executable = executableName(platform);
+  return fs.existsSync(path.join(root, 'bin', executable))
+    ? path.join(root, 'bin', executable)
+    : path.join(root, executable);
+}
+
+function findRuntimeRoot(binaryPath) {
+  if (!binaryPath || !path.isAbsolute(binaryPath)) return null;
+  let current = path.dirname(binaryPath);
+  for (let depth = 0; depth < 6; depth += 1) {
+    if (fs.existsSync(path.join(current, 'runtime.json'))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
+}
+
+function runtimeSearchDirectories(binaryPath) {
+  const root = findRuntimeRoot(binaryPath);
+  const manifest = readRuntimeManifest(root);
+  const configured = Array.isArray(manifest?.runtimeLayout?.searchPaths)
+    ? manifest.runtimeLayout.searchPaths.map((relative) => path.resolve(root, ...String(relative).split('/')))
+    : [];
+  return unique([
+    path.dirname(binaryPath),
+    root,
+    root && path.join(root, 'bin'),
+    ...configured
+  ]).filter((directory) => {
+    try {
+      return fs.statSync(directory).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+}
+
+function autoTraceEnvironment(binaryPath, baseEnvironment = process.env) {
+  const environment = { ...baseEnvironment };
+  if (process.platform === 'win32') {
+    const prefix = runtimeSearchDirectories(binaryPath);
+    environment.PATH = [...prefix, baseEnvironment.PATH || ''].filter(Boolean).join(path.delimiter);
+  }
+  return environment;
+}
+
+function packagedCandidates(platform, arch) {
+  const executable = executableName(platform);
+  const roots = runtimeRoots(platform, arch);
+  return unique([
     process.env.AUTOTRACE_BINARY,
-    resourcesPath && path.join(resourcesPath, 'autotrace-runtime', 'bin', executable),
-    resourcesPath && path.join(resourcesPath, 'autotrace-runtime', executable),
-    path.join(repositoryRoot, 'vendor', 'autotrace', target, 'bin', executable),
-    path.join(repositoryRoot, 'vendor', 'autotrace', target, executable),
+    ...roots.map((root) => manifestExecutable(root, platform)),
+    ...roots.flatMap((root) => [path.join(root, 'bin', executable), path.join(root, executable)]),
     platform === 'darwin' && '/opt/homebrew/bin/autotrace',
     platform === 'darwin' && '/usr/local/bin/autotrace',
     platform === 'win32' && process.env.ProgramFiles && path.join(process.env.ProgramFiles, 'AutoTrace', executable),
@@ -50,11 +115,14 @@ function packagedCandidates(platform, arch) {
 }
 
 function runProbe(binaryPath, args, timeout, options = {}) {
+  const { env: requestedEnvironment, ...spawnOptions } = options;
   const result = spawnSync(binaryPath, args, {
     encoding: 'utf8',
     windowsHide: true,
     timeout,
-    ...options
+    cwd: path.isAbsolute(binaryPath) ? path.dirname(binaryPath) : undefined,
+    env: autoTraceEnvironment(binaryPath, requestedEnvironment || process.env),
+    ...spawnOptions
   });
   const output = `${result.stdout || ''}\n${result.stderr || ''}`.trim();
   return {
@@ -67,7 +135,7 @@ function runProbe(binaryPath, args, timeout, options = {}) {
   };
 }
 
-function runFunctionalProbe(binaryPath, timeout) {
+function runFunctionalProbe(binaryPath, timeout, options = {}) {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'autotrace-functional-probe-'));
   const inputPath = path.join(workspace, 'probe.png');
   const outputPath = path.join(workspace, 'probe.svg');
@@ -81,7 +149,7 @@ function runFunctionalProbe(binaryPath, timeout) {
       '-background-color', 'FFFFFF',
       '-despeckle-level', '0',
       inputPath
-    ], timeout);
+    ], timeout, options);
     let svgValid = false;
     let svgBytes = 0;
     if (!attempt.error && attempt.status === 0 && fs.existsSync(outputPath)) {
@@ -101,24 +169,26 @@ function runFunctionalProbe(binaryPath, timeout) {
   }
 }
 
-function probeAutoTrace(binaryPath, { timeout = 5000, functionalFallback = process.platform === 'win32' } = {}) {
+function probeAutoTrace(binaryPath, {
+  timeout = 5000,
+  functionalFallback = process.platform === 'win32',
+  env = process.env
+} = {}) {
   const isPath = path.isAbsolute(binaryPath) || binaryPath.includes(path.sep) || binaryPath.includes('/');
   if (isPath && !fs.existsSync(binaryPath)) {
     return { available: false, binaryPath, error: 'file-not-found', attempts: [] };
   }
 
   const attempts = [
-    runProbe(binaryPath, ['-version'], timeout),
-    runProbe(binaryPath, ['--version'], timeout),
-    runProbe(binaryPath, ['-list-output-formats'], timeout)
+    runProbe(binaryPath, ['-version'], timeout, { env }),
+    runProbe(binaryPath, ['--version'], timeout, { env }),
+    runProbe(binaryPath, ['-list-output-formats'], timeout, { env })
   ];
   let selected = attempts.find((attempt) => attempt.succeeded)
     || attempts.find((attempt) => /autotrace|\bsvg\b|\beps\b/i.test(attempt.output));
 
-  // Some official Windows builds return 127 for informational switches even
-  // though tracing works. A real PNG→SVG conversion is the source of truth.
   if (!selected && functionalFallback) {
-    const functionalAttempt = runFunctionalProbe(binaryPath, Math.max(timeout, 15000));
+    const functionalAttempt = runFunctionalProbe(binaryPath, Math.max(timeout, 15000), { env });
     attempts.push(functionalAttempt);
     if (functionalAttempt.succeeded) selected = functionalAttempt;
   }
@@ -130,7 +200,7 @@ function probeAutoTrace(binaryPath, { timeout = 5000, functionalFallback = proce
   return {
     available,
     binaryPath,
-    version: versionMatch?.[1] || null,
+    version: versionMatch?.[1] || readRuntimeManifest(findRuntimeRoot(binaryPath))?.version || null,
     output: selected?.output || combinedOutput,
     status: selected?.status ?? attempts.at(-1)?.status ?? null,
     error: available ? null : attempts.find((attempt) => attempt.error)?.error || null,
@@ -180,6 +250,7 @@ function detectAutoTraceRuntime({
     && path.resolve(selected.binaryPath).startsWith(path.resolve(process.resourcesPath)));
   const repositoryRuntime = Boolean(selected?.binaryPath
     && selected.binaryPath.includes(`${path.sep}vendor${path.sep}autotrace${path.sep}`));
+  const runtimeRoot = selected?.binaryPath ? findRuntimeRoot(selected.binaryPath) : null;
 
   return {
     id: 'autotrace-cli',
@@ -193,6 +264,8 @@ function detectAutoTraceRuntime({
     available: Boolean(selected),
     binaryRequired: true,
     binaryPath: selected?.binaryPath || null,
+    runtimeRoot,
+    runtimeSearchPaths: selected?.binaryPath ? runtimeSearchDirectories(selected.binaryPath) : [],
     source: packaged ? 'packaged-resources' : repositoryRuntime ? 'vendor-runtime' : selected ? 'system-path' : null,
     version: selected?.version || null,
     probeArgs: selected?.probeArgs || null,
@@ -223,12 +296,18 @@ function requireAutoTraceRuntime(options = {}) {
 module.exports = {
   FUNCTIONAL_PROBE_PNG,
   SUPPORTED_TARGETS,
+  autoTraceEnvironment,
   currentTarget,
   detectAutoTraceRuntime,
   executableName,
+  findRuntimeRoot,
+  manifestExecutable,
   packagedCandidates,
   probeAutoTrace,
+  readRuntimeManifest,
   requireAutoTraceRuntime,
   runFunctionalProbe,
-  runProbe
+  runProbe,
+  runtimeRoots,
+  runtimeSearchDirectories
 };
