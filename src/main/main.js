@@ -38,7 +38,7 @@ function createWindow() {
     minWidth: 1040,
     minHeight: 700,
     backgroundColor: '#111317',
-    title: 'Print Upscale Studio V2.3.1 Mask Refinement',
+    title: 'Print Upscale Studio V2.4 Packaging Preflight',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
