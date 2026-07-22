@@ -18,6 +18,8 @@ const targetRoot = path.join(repositoryRoot, 'vendor', 'autotrace', target);
 const binDirectory = path.join(targetRoot, 'bin');
 const executableName = platform === 'win32' ? 'autotrace.exe' : 'autotrace';
 const preparedExecutable = path.join(binDirectory, executableName);
+const githubToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
+const userAgent = 'Print-Upscale-Studio-AutoTrace-Runtime';
 
 async function exists(filePath) {
   try {
@@ -40,15 +42,40 @@ function commandPath(command) {
   }
 }
 
+function requestHeaders(url, accept) {
+  const headers = {
+    Accept: accept,
+    'User-Agent': userAgent
+  };
+  const hostname = new URL(url).hostname.toLowerCase();
+  if (hostname === 'api.github.com') {
+    headers['X-GitHub-Api-Version'] = '2022-11-28';
+    if (githubToken) headers.Authorization = `Bearer ${githubToken}`;
+  }
+  return headers;
+}
+
+async function responseError(response, label) {
+  let detail = '';
+  try {
+    const body = await response.text();
+    const parsed = JSON.parse(body);
+    detail = parsed.message || body;
+  } catch {
+    // Ignore unreadable or non-JSON error bodies.
+  }
+  const remaining = response.headers.get('x-ratelimit-remaining');
+  const reset = response.headers.get('x-ratelimit-reset');
+  const rate = remaining !== null ? ` · rate remaining ${remaining}${reset ? ` · reset ${reset}` : ''}` : '';
+  return new Error(`${label}: HTTP ${response.status}${detail ? ` · ${detail}` : ''}${rate}`);
+}
+
 async function download(url, destination) {
   const response = await fetch(url, {
-    headers: {
-      Accept: 'application/octet-stream',
-      'User-Agent': 'Print-Upscale-Studio-AutoTrace-Runtime'
-    },
+    headers: requestHeaders(url, 'application/octet-stream'),
     redirect: 'follow'
   });
-  if (!response.ok) throw new Error(`Download AutoTrace thất bại: HTTP ${response.status}`);
+  if (!response.ok) throw await responseError(response, 'Download AutoTrace thất bại');
   await fs.writeFile(destination, Buffer.from(await response.arrayBuffer()));
 }
 
@@ -78,23 +105,63 @@ async function copyLicenseFiles(extracted) {
   }
 }
 
+function selectWindowsAsset(assets = []) {
+  return assets.find((item) => /win64.*setup\.exe$/i.test(item.name))
+    || assets.find((item) => /win.*64.*\.exe$/i.test(item.name))
+    || null;
+}
+
+async function discoverWindowsAssetFromApi() {
+  const url = `https://api.github.com/repos/autotrace/autotrace/releases/tags/${VERSION}`;
+  const response = await fetch(url, {
+    headers: requestHeaders(url, 'application/vnd.github+json'),
+    redirect: 'follow'
+  });
+  if (!response.ok) throw await responseError(response, `Không đọc được AutoTrace release ${VERSION}`);
+  const release = await response.json();
+  return selectWindowsAsset(release.assets);
+}
+
+async function discoverWindowsAssetFromHtml() {
+  const pageUrl = `https://github.com/autotrace/autotrace/releases/expanded_assets/${VERSION}`;
+  const response = await fetch(pageUrl, {
+    headers: requestHeaders(pageUrl, 'text/html'),
+    redirect: 'follow'
+  });
+  if (!response.ok) throw await responseError(response, `Không đọc được trang asset AutoTrace ${VERSION}`);
+  const html = await response.text();
+  const matches = [...html.matchAll(/href=["']([^"']*\/releases\/download\/[^"']*win64[^"']*setup\.exe)["']/gi)];
+  const href = matches[0]?.[1];
+  if (!href) return null;
+  const browserDownloadUrl = new URL(href.replaceAll('&amp;', '&'), pageUrl).href;
+  return {
+    name: path.basename(new URL(browserDownloadUrl).pathname),
+    browser_download_url: browserDownloadUrl
+  };
+}
+
+async function discoverWindowsAsset() {
+  try {
+    const asset = await discoverWindowsAssetFromApi();
+    if (asset) return asset;
+    console.warn(`GitHub Releases API không liệt kê Windows x64 asset cho AutoTrace ${VERSION}; thử HTML fallback.`);
+  } catch (error) {
+    console.warn(`GitHub Releases API không khả dụng; thử HTML fallback: ${error.message || error}`);
+  }
+  return discoverWindowsAssetFromHtml();
+}
+
 async function prepareWindowsRuntime() {
   if (await exists(preparedExecutable)) return preparedExecutable;
 
-  const releaseResponse = await fetch(`https://api.github.com/repos/autotrace/autotrace/releases/tags/${VERSION}`, {
-    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Print-Upscale-Studio-AutoTrace-Runtime' }
-  });
-  if (!releaseResponse.ok) throw new Error(`Không đọc được AutoTrace release ${VERSION}: HTTP ${releaseResponse.status}`);
-  const release = await releaseResponse.json();
-  const asset = release.assets?.find((item) => /win64.*setup\.exe$/i.test(item.name))
-    || release.assets?.find((item) => /win.*64.*\.exe$/i.test(item.name));
+  const asset = await discoverWindowsAsset();
   if (!asset) throw new Error(`Release AutoTrace ${VERSION} không có Windows x64 installer.`);
 
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'autotrace-runtime-'));
   const installer = path.join(workspace, asset.name);
   const extracted = path.join(workspace, 'extracted');
   await fs.mkdir(extracted, { recursive: true });
-  await download(asset.browser_download_url, installer);
+  await download(asset.url || asset.browser_download_url, installer);
   execFileSync('7z', ['x', installer, `-o${extracted}`, '-y'], { stdio: 'inherit', windowsHide: true });
   const executables = await findFiles(extracted, (filePath) => path.basename(filePath).toLowerCase() === 'autotrace.exe');
   if (!executables.length) throw new Error('Không tìm thấy autotrace.exe sau khi giải nén installer.');
