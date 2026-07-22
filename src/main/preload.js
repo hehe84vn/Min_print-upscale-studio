@@ -2,13 +2,21 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('studio', {
   selectInput: () => ipcRenderer.invoke('file:select-input'),
+  selectBatchInputs: () => ipcRenderer.invoke('file:select-batch-inputs'),
   selectReference: () => ipcRenderer.invoke('file:select-reference'),
   selectOutput: (payload) => ipcRenderer.invoke('file:select-output', payload),
   selectBenchmarkOutputDirectory: () => ipcRenderer.invoke('benchmark:select-output-directory'),
+  selectProductionOutputDirectory: () => ipcRenderer.invoke('production:select-output-directory'),
   fileUrl: (filePath) => ipcRenderer.invoke('file:url', filePath),
   inspectImage: (filePath) => ipcRenderer.invoke('image:metadata', filePath),
+  analyzeImage: (payload) => ipcRenderer.invoke('smart:analyze', payload),
   getDroppedFilePath: (file) => webUtils.getPathForFile(file),
   process: (payload) => ipcRenderer.invoke('image:process', payload),
+  startProduction: (payload) => ipcRenderer.invoke('production:start', payload),
+  pauseProduction: () => ipcRenderer.invoke('production:pause'),
+  resumeProduction: () => ipcRenderer.invoke('production:resume'),
+  retryFailedProduction: () => ipcRenderer.invoke('production:retry-failed'),
+  getProductionStatus: () => ipcRenderer.invoke('production:status'),
   getBenchmarkPresets: () => ipcRenderer.invoke('benchmark:presets'),
   runBenchmark: (payload) => ipcRenderer.invoke('benchmark:run', payload),
   getColorSettings: () => ipcRenderer.invoke('color:settings:get'),
@@ -33,5 +41,10 @@ contextBridge.exposeInMainWorld('studio', {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('job:progress', listener);
     return () => ipcRenderer.removeListener('job:progress', listener);
+  },
+  onProductionStatus: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('production:status', listener);
+    return () => ipcRenderer.removeListener('production:status', listener);
   }
 });
