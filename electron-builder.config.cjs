@@ -79,6 +79,7 @@ async function validatePackagedAutoTrace(context) {
 
   try {
     const result = spawnSync(executable, [
+      '-input-format', 'ppm',
       '-output-format', 'svg',
       '-output-file', outputPath,
       '-color-count', '2',
@@ -95,7 +96,9 @@ async function validatePackagedAutoTrace(context) {
       throw new Error(`Packaged AutoTrace failed (${result.status}): ${result.error?.message || result.stderr || result.stdout || 'unknown error'}`);
     }
     const svg = fs.readFileSync(outputPath, 'utf8');
-    if (!/<svg\b/i.test(svg) || !/<path\b/i.test(svg)) throw new Error('Packaged AutoTrace không tạo SVG hợp lệ.');
+    if (!/<svg\b/i.test(svg) || !/<(?:path|polygon|polyline)\b/i.test(svg)) {
+      throw new Error('Packaged AutoTrace không tạo SVG hợp lệ.');
+    }
     console.log(`Packaged AutoTrace verified in ${resourcesDirectory}`);
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
