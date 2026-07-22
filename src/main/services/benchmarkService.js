@@ -4,6 +4,7 @@ const os = require('node:os');
 const sharp = require('sharp');
 const { runNcnnUpscale } = require('./engineService');
 const { flatBlend, protectedBlend } = require('./packagingProtectionService');
+const { createPreflightContext, runPackagingPreflight } = require('./preflightService');
 
 const BENCHMARK_PRESETS = [
   {
@@ -29,8 +30,8 @@ const BENCHMARK_PRESETS = [
   },
   {
     id: 'packaging-hybrid',
-    label: 'Packaging Hybrid · Semantic Guard',
-    description: 'Trộn High Fidelity với RealESRGAN Detail, bảo vệ vùng giống chữ/logo và tự kiểm tra QR/barcode.',
+    label: 'Packaging Hybrid · Preflight',
+    description: 'Trộn High Fidelity với RealESRGAN Detail, bảo vệ chữ/logo và tự kiểm tra an toàn bao bì.',
     type: 'blend',
     baseModel: 'high-fidelity-4x',
     detailModel: 'realesrgan-x4plus'
@@ -97,6 +98,22 @@ async function copyAsPng(sourcePath, outputPath, dpi) {
     .toFile(outputPath);
 }
 
+async function safePreflight({ context, outputPath, semanticMaskPath, protection }) {
+  if (!context) return null;
+  try {
+    return await runPackagingPreflight({ context, outputPath, semanticMaskPath, protection });
+  } catch (error) {
+    return {
+      version: 'preflight-v1',
+      status: 'warning',
+      score: null,
+      error: error.message || String(error),
+      metrics: {},
+      recommendations: ['Preflight gặp lỗi kỹ thuật; cần kiểm tra thủ công kết quả này.']
+    };
+  }
+}
+
 async function runBenchmark({
   settingsService,
   inputPath,
@@ -110,6 +127,7 @@ async function runBenchmark({
   protectionSensitivity = 65,
   semanticProtectionEnabled = true,
   codeGuardEnabled = true,
+  preflightEnabled = true,
   onProgress
 }) {
   if (!inputPath) throw new Error('Chưa chọn ảnh nguồn cho Model Lab.');
@@ -134,6 +152,8 @@ async function runBenchmark({
   const results = [];
 
   await fs.mkdir(sessionDirectory, { recursive: true });
+  onProgress?.(2, preflightEnabled ? 'Đang phân tích ảnh nguồn cho Packaging Preflight' : 'Đang chuẩn bị Model Lab');
+  const preflightContext = preflightEnabled ? await createPreflightContext(inputPath) : null;
 
   const runModel = async (model, progress) => {
     if (modelCache.has(model)) return modelCache.get(model);
@@ -167,21 +187,22 @@ async function runBenchmark({
 
       try {
         let blendInfo = null;
+        let semanticMaskPath = null;
         if (preset.type === 'blend') {
           const basePath = await runModel(preset.baseModel, progress);
           const detailPath = await runModel(preset.detailModel, progress);
           const prefix = `${String(index + 1).padStart(2, '0')}_${sanitizeName(preset.id)}`;
           const maskPath = protectionEnabled ? path.join(sessionDirectory, `${prefix}_protection-mask.png`) : null;
-          const semanticMaskPath = protectionEnabled && semanticProtectionEnabled
+          semanticMaskPath = protectionEnabled && semanticProtectionEnabled
             ? path.join(sessionDirectory, `${prefix}_text-logo-mask.png`)
             : null;
           const barcodeMaskPath = protectionEnabled && codeGuardEnabled
             ? path.join(sessionDirectory, `${prefix}_barcode-mask.png`)
             : null;
           progress(
-            92,
+            91,
             protectionEnabled
-              ? 'đang tạo semantic mask và kiểm tra QR/barcode'
+              ? 'đang tạo refined mask và kiểm tra QR/barcode'
               : 'đang trộn toàn ảnh'
           );
           blendInfo = protectionEnabled
@@ -211,6 +232,14 @@ async function runBenchmark({
           await copyAsPng(modelOutput, outputPath, safeDpi);
         }
 
+        progress(97, preflightEnabled ? 'đang chạy Packaging Preflight' : 'đang hoàn tất');
+        const preflight = await safePreflight({
+          context: preflightContext,
+          outputPath,
+          semanticMaskPath,
+          protection: blendInfo?.protection || null
+        });
+
         results.push({
           id: preset.id,
           label: preset.label,
@@ -221,6 +250,7 @@ async function runBenchmark({
           protection: blendInfo?.protection || null,
           barcodeGuard: blendInfo?.barcodeGuard || null,
           blendStrength: blendInfo?.strength || null,
+          preflight,
           error: null
         });
       } catch (error) {
@@ -234,14 +264,38 @@ async function runBenchmark({
           protection: null,
           barcodeGuard: null,
           blendStrength: null,
+          preflight: null,
           error: error.message || String(error)
         });
       }
     }
 
+    const preflightSummary = {
+      enabled: Boolean(preflightEnabled),
+      pass: results.filter((result) => result.preflight?.status === 'pass').length,
+      warning: results.filter((result) => result.preflight?.status === 'warning').length,
+      fail: results.filter((result) => result.preflight?.status === 'fail').length,
+      skipped: results.filter((result) => !result.preflight).length
+    };
+    const preflightReportPath = path.join(sessionDirectory, 'preflight-report.json');
+    await fs.writeFile(preflightReportPath, JSON.stringify({
+      schemaVersion: 1,
+      createdAt: new Date().toISOString(),
+      inputPath,
+      scale: safeScale,
+      summary: preflightSummary,
+      results: results.map((result) => ({
+        id: result.id,
+        label: result.label,
+        outputPath: result.outputPath,
+        preflight: result.preflight,
+        error: result.error
+      }))
+    }, null, 2), 'utf8');
+
     const reportPath = path.join(sessionDirectory, 'benchmark-report.json');
     const report = {
-      schemaVersion: 4,
+      schemaVersion: 5,
       createdAt: new Date().toISOString(),
       inputPath,
       referencePath,
@@ -254,14 +308,21 @@ async function runBenchmark({
         semanticProtectionEnabled: Boolean(semanticProtectionEnabled),
         codeGuardEnabled: Boolean(codeGuardEnabled)
       },
+      packagingPreflight: {
+        enabled: Boolean(preflightEnabled),
+        reportPath: preflightReportPath,
+        summary: preflightSummary
+      },
       results
     };
     await fs.writeFile(reportPath, JSON.stringify(report, null, 2), 'utf8');
-    onProgress?.(100, 'Model Lab hoàn tất');
+    onProgress?.(100, 'Model Lab và Packaging Preflight hoàn tất');
 
     return {
       outputDirectory: sessionDirectory,
       reportPath,
+      preflightReportPath,
+      preflightSummary,
       results
     };
   } finally {
