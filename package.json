@@ -1,7 +1,7 @@
 {
   "name": "print-upscale-studio",
-  "version": "2.8.4",
-  "description": "Smart print production workflow plus a mandatory vector input quality gate that rejects insufficient resolution, blur, weak contrast, thin strokes and severe JPEG artifacts before tracing.",
+  "version": "2.9.0",
+  "description": "Multi-engine vector workflow with conservative input quality gating, Potrace as the primary monochrome tracer, and VTracer fallback for resilience and color artwork.",
   "main": "src/main/main.js",
   "author": "ngoctunguyenle@gmail.com",
   "license": "MIT",
@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "lint": "node scripts/check-syntax.mjs",
-    "test:smoke": "node scripts/smoke-test.mjs && node scripts/cmyk-structure-smoke.mjs && node scripts/smart-production-smoke.mjs && node scripts/vector-input-quality-smoke.mjs && node scripts/vector-geometry-smoke.mjs && node scripts/binary-reconstruction-smoke.mjs && node scripts/vector-logo-smoke.mjs",
+    "test:smoke": "node scripts/smoke-test.mjs && node scripts/cmyk-structure-smoke.mjs && node scripts/smart-production-smoke.mjs && node scripts/vector-input-quality-smoke.mjs && node scripts/vector-geometry-smoke.mjs && node scripts/binary-reconstruction-smoke.mjs && node scripts/potrace-vector-smoke.mjs && node scripts/vector-logo-smoke.mjs",
     "check": "npm run lint && npm run test:smoke",
     "runtime:fetch": "node scripts/fetch-upscayl-runtime.mjs",
     "profiles:fetch": "node scripts/fetch-color-profiles.mjs",
@@ -22,6 +22,7 @@
   "dependencies": {
     "@neplex/vectorizer": "0.1.0",
     "@zxing/library": "0.23.0",
+    "potrace": "2.1.8",
     "sharp": "0.35.3"
   },
   "devDependencies": {
