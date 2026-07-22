@@ -1,3 +1,5 @@
+'use strict';
+
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
@@ -116,8 +118,19 @@ async function safeBackgroundCleanup(inputPath, outputPath) {
 
 async function vectorizeLogo(payload) {
   const options = payload.options || {};
-  const shouldCleanup = options.backgroundCleanup !== false && options.colorMode !== 'binary';
-  if (!shouldCleanup) return engine.vectorizeLogo({ ...payload, options: { ...options, backgroundCleanup: false } });
+  const sourceAnalysis = await engine.analyzeMonochromeSource(payload.inputPath);
+  const forcedBinary = options.colorMode === 'binary';
+  const useGeometrySource = forcedBinary || sourceAnalysis.isMonochrome;
+  const shouldCleanup = !useGeometrySource
+    && options.backgroundCleanup !== false
+    && options.colorMode !== 'binary';
+
+  if (!shouldCleanup) {
+    return engine.vectorizeLogo({
+      ...payload,
+      options: { ...options, sourceAnalysis }
+    });
+  }
 
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'print-vector-background-'));
   const cleanedInput = path.join(workspace, 'background-cleaned.png');
@@ -126,7 +139,7 @@ async function vectorizeLogo(payload) {
     const result = await engine.vectorizeLogo({
       ...payload,
       inputPath: cleanup.applied ? cleanedInput : payload.inputPath,
-      options: { ...options, backgroundCleanup: false }
+      options: { ...options, backgroundCleanup: false, sourceAnalysis }
     });
     result.vectorReport.inputPath = payload.inputPath;
     result.vectorReport.backgroundCleanup = cleanup;
