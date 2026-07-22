@@ -1,5 +1,7 @@
 'use strict';
 
+const { requirePotraceRuntime } = require('./potraceRuntimeService');
+
 const PRESETS = {
   detail: {
     id: 'potrace-detail',
@@ -40,16 +42,22 @@ function normalizeSvgCanvas(svg, source) {
   });
 }
 
+function ensureEvenOddFillRule(svg) {
+  return String(svg).replace(/<path\b([^>]*)>/gi, (match, attributes) => {
+    if (/\bfill-rule=/i.test(attributes)) return match;
+    return `<path${attributes} fill-rule="evenodd">`;
+  });
+}
+
 function traceWithPotrace(inputPath, params) {
   return new Promise((resolve, reject) => {
+    let runtime;
     let potrace;
     try {
+      runtime = requirePotraceRuntime();
       potrace = require('potrace');
     } catch (error) {
-      const wrapped = new Error('Potrace runtime chưa được cài. Chạy npm install để cài dependency potrace.');
-      wrapped.code = 'POTRACE_RUNTIME_MISSING';
-      wrapped.cause = error;
-      reject(wrapped);
+      reject(error);
       return;
     }
 
@@ -74,7 +82,7 @@ function traceWithPotrace(inputPath, params) {
       turnPolicy: turnPolicyMap[params.turnPolicy] ?? turnPolicyMap.minority
     }, (error, svg) => {
       if (error) reject(error);
-      else resolve(String(svg));
+      else resolve({ svg: String(svg), runtime });
     });
   });
 }
@@ -88,7 +96,7 @@ function selectedPotracePresets(strategy = 'smart') {
 
 async function buildPotraceCandidate({ inputPath, preset, source, optimize, assessSvg }) {
   const traced = await traceWithPotrace(inputPath, preset);
-  const restored = normalizeSvgCanvas(traced, source);
+  const restored = ensureEvenOddFillRule(normalizeSvgCanvas(traced.svg, source));
   const optimized = String(await optimize(restored, {
     plugins: ['preset-default', { name: 'removeTitle' }],
     multipass: true,
@@ -106,11 +114,13 @@ async function buildPotraceCandidate({ inputPath, preset, source, optimize, asse
     trace: {
       engine: 'potrace-js',
       algorithm: 'potrace',
+      runtime: traced.runtime,
       turdSize: preset.turdSize,
       alphaMax: preset.alphaMax,
       optCurve: preset.optCurve,
       optTolerance: preset.optTolerance,
-      turnPolicy: preset.turnPolicy
+      turnPolicy: preset.turnPolicy,
+      fillRule: 'evenodd'
     },
     reconstruction: null,
     geometryLock: null,
@@ -122,6 +132,7 @@ async function buildPotraceCandidate({ inputPath, preset, source, optimize, asse
 module.exports = {
   PRESETS,
   buildPotraceCandidate,
+  ensureEvenOddFillRule,
   normalizeSvgCanvas,
   selectedPotracePresets,
   traceWithPotrace
