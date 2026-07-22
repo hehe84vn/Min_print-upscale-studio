@@ -4,6 +4,7 @@ const os = require('node:os');
 const sharp = require('sharp');
 const { runNcnnUpscale } = require('./engineService');
 const { enhanceImage } = require('./aiProviderService');
+const { vectorizeLogo } = require('./vectorLogoService');
 
 const MAX_SCALE = 8;
 
@@ -144,56 +145,6 @@ async function textPrintSafe({ inputPath, outputPath, options, onProgress }) {
   return outputPath;
 }
 
-async function vectorLogo({ inputPath, outputPath, options, onProgress }) {
-  const threshold = Math.max(0, Math.min(255, Number(options.threshold ?? 170)));
-  const colorMode = options.colorMode === 'color' ? 'color' : 'binary';
-  const tempPath = path.join(os.tmpdir(), `vector-input-${Date.now()}-${Math.random().toString(16).slice(2)}.png`);
-
-  try {
-    onProgress?.(10, 'Đang làm sạch ảnh nguồn');
-    let pipeline = sharp(inputPath, { failOn: 'none' })
-      .rotate()
-      .flatten({ background: '#ffffff' })
-      .normalize();
-
-    if (colorMode === 'binary') {
-      pipeline = pipeline.grayscale().threshold(threshold);
-      if (options.invert) pipeline = pipeline.negate();
-    }
-    await pipeline.png().toFile(tempPath);
-
-    onProgress?.(45, 'Đang dựng đường vector');
-    const { vectorize, optimize, ColorMode, Hierarchical, PathSimplifyMode } = await import('@neplex/vectorizer');
-    const source = await fs.readFile(tempPath);
-    const svg = await vectorize(source, {
-      colorMode: colorMode === 'color' ? ColorMode.Color : ColorMode.Binary,
-      colorPrecision: Math.max(1, Math.min(8, Number(options.colorPrecision ?? 6))),
-      filterSpeckle: Math.max(0, Number(options.turdSize ?? 4)),
-      spliceThreshold: 45,
-      cornerThreshold: 60,
-      hierarchical: Hierarchical.Stacked,
-      mode: PathSimplifyMode.Spline,
-      layerDifference: Math.max(1, Number(options.layerDifference ?? 5)),
-      lengthThreshold: 5,
-      maxIterations: 2,
-      pathPrecision: 3
-    });
-
-    onProgress?.(80, 'Đang tối ưu SVG');
-    const optimized = await optimize(svg, {
-      plugins: ['preset-default', { name: 'removeTitle' }],
-      multipass: true,
-      multipassIterations: 3
-    });
-
-    await fs.writeFile(outputPath, optimized, 'utf8');
-    onProgress?.(100, 'Hoàn tất');
-    return outputPath;
-  } finally {
-    await fs.rm(tempPath, { force: true });
-  }
-}
-
 async function aiEnhance({ secureSecretsService, inputPath, outputPath, options, onProgress }) {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'print-ai-enhance-'));
   const normalizedInput = path.join(workspace, 'cloud-input.png');
@@ -259,7 +210,7 @@ async function processImage(payload) {
   if (payload.operation === 'ai-enhance') return aiEnhance(payload);
   if (payload.operation === 'restore') return restoreSafe(payload);
   if (payload.operation === 'text-print') return textPrintSafe(payload);
-  if (payload.operation === 'vector-logo') return vectorLogo(payload);
+  if (payload.operation === 'vector-logo') return vectorizeLogo(payload);
   throw new Error(`Unknown operation: ${payload.operation}`);
 }
 
