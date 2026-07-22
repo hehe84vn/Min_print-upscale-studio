@@ -1,3 +1,3 @@
 'use strict';
 
-module.exports = require('./binaryShapeReconstructionV2');
+module.exports = require('./binaryShapeReconstructionV3');
