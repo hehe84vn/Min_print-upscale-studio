@@ -1,7 +1,7 @@
 {
   "name": "print-upscale-studio",
-  "version": "2.9.3",
-  "description": "Curve-safe multi-engine vector workflow: Potrace for monochrome artwork, VTracer spline and inherited AutoTrace candidates for flat-color artwork, with curve, palette, fidelity and edge quality gates plus explicit fallback reporting.",
+  "version": "2.9.4",
+  "description": "Self-contained multi-engine vector workflow: Potrace for monochrome artwork, VTracer spline and bundled AutoTrace candidates for flat-color artwork, with curve, palette, fidelity and edge quality gates plus explicit fallback reporting.",
   "main": "src/main/main.js",
   "author": "ngoctunguyenle@gmail.com",
   "license": "MIT",
@@ -9,7 +9,8 @@
   "scripts": {
     "start": "electron .",
     "lint": "node scripts/check-syntax.mjs",
-    "test:smoke": "node scripts/smoke-test.mjs && node scripts/cmyk-structure-smoke.mjs && node scripts/smart-production-smoke.mjs && node scripts/vector-input-quality-smoke.mjs && node scripts/vector-geometry-smoke.mjs && node scripts/binary-reconstruction-smoke.mjs && node scripts/potrace-vector-smoke.mjs && node scripts/autotrace-vector-smoke.mjs && node scripts/vector-logo-smoke.mjs",
+    "autotrace:smoke-runtime": "node scripts/autotrace-runtime-smoke.mjs",
+    "test:smoke": "node scripts/smoke-test.mjs && node scripts/cmyk-structure-smoke.mjs && node scripts/smart-production-smoke.mjs && node scripts/vector-input-quality-smoke.mjs && node scripts/vector-geometry-smoke.mjs && node scripts/binary-reconstruction-smoke.mjs && node scripts/potrace-vector-smoke.mjs && node scripts/autotrace-vector-smoke.mjs && node scripts/autotrace-runtime-smoke.mjs && node scripts/vector-logo-smoke.mjs",
     "check": "npm run lint && npm run test:smoke",
     "runtime:fetch": "node scripts/fetch-upscayl-runtime.mjs",
     "profiles:fetch": "node scripts/fetch-color-profiles.mjs",
