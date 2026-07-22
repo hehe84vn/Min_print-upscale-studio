@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import sharp from 'sharp';
 
 const target = `${process.platform}-${process.arch}`;
 const repositoryRoot = path.resolve(import.meta.dirname, '..');
@@ -57,24 +58,6 @@ function cleanEnvironment(homeDirectory) {
   return env;
 }
 
-function ppmFixture(width = 32, height = 32) {
-  const pixels = Buffer.alloc(width * height * 3, 255);
-  const centerX = (width - 1) / 2;
-  const centerY = (height - 1) / 2;
-  const radius = Math.min(width, height) * 0.31;
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const distance = Math.hypot(x - centerX, y - centerY);
-      if (distance > radius) continue;
-      const offset = (y * width + x) * 3;
-      pixels[offset] = 0;
-      pixels[offset + 1] = 0;
-      pixels[offset + 2] = 0;
-    }
-  }
-  return Buffer.concat([Buffer.from(`P6\n${width} ${height}\n255\n`, 'ascii'), pixels]);
-}
-
 async function writeDiagnostics(status, extra = {}) {
   await fs.writeFile(diagnosticsPath, `${JSON.stringify({
     status,
@@ -89,6 +72,18 @@ async function writeDiagnostics(status, extra = {}) {
     traceOutput,
     ...extra
   }, null, 2)}\n`, 'utf8');
+}
+
+async function createPngFixture(outputPath) {
+  const svg = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <rect width="64" height="64" fill="#ffffff"/>
+      <circle cx="32" cy="32" r="20" fill="#000000"/>
+    </svg>
+  `);
+  await sharp(svg)
+    .png({ palette: true, colours: 2, dither: 0 })
+    .toFile(outputPath);
 }
 
 async function main() {
@@ -145,12 +140,12 @@ async function main() {
     assert.equal(Boolean(versionResult.error), false, versionResult.error?.message);
     assert.ok(versionResult.status === 0 || /autotrace/i.test(versionOutput), `AutoTrace version probe failed: ${versionOutput}`);
 
-    stage = 'pnm-to-svg-trace';
-    const inputPath = path.join(workspace, 'fixture.ppm');
+    stage = 'png-to-svg-trace';
+    const inputPath = path.join(workspace, 'fixture.png');
     const outputPath = path.join(workspace, 'fixture.svg');
-    await fs.writeFile(inputPath, ppmFixture());
+    await createPngFixture(inputPath);
     traceOutput = run(executable, [
-      '-input-format', 'pnm',
+      '-input-format', 'png',
       '-output-format', 'svg',
       '-output-file', outputPath,
       '-color-count', '2',
@@ -162,8 +157,8 @@ async function main() {
     stage = 'validate-svg-output';
     assert.match(svg, /<svg\b/i);
     assert.match(svg, /<(?:path|polygon|polyline)\b/i);
-    await writeDiagnostics('success', { svgBytes: Buffer.byteLength(svg, 'utf8') });
-    console.log(`AutoTrace bundled runtime OK on ${target}: ${manifest.bundledLibraryCount ?? 'DLL'} dependencies, clean PATH trace succeeded.`);
+    await writeDiagnostics('success', { svgBytes: Buffer.byteLength(svg, 'utf8'), inputFormat: 'png' });
+    console.log(`AutoTrace bundled runtime OK on ${target}: ${manifest.bundledLibraryCount ?? 'DLL'} dependencies, clean PATH PNG trace succeeded.`);
   } finally {
     await fs.rm(workspace, { recursive: true, force: true });
   }
