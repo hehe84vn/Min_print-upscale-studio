@@ -120,6 +120,7 @@ async function prepareFlatPalettePpm(inputPath, outputPath, options = {}) {
     traceScale: trace.scale,
     format: metadata.format || path.extname(inputPath).slice(1),
     inputFormat: 'ppm-p6',
+    cliInputHandler: 'pnm',
     background: 'FFFFFF',
     requestedPaletteColors: colorCount,
     actualPaletteColors,
@@ -129,7 +130,7 @@ async function prepareFlatPalettePpm(inputPath, outputPath, options = {}) {
 
 async function runAutoTraceSpline({ binaryPath, inputPath, outputPath, params }) {
   const args = [
-    '-input-format', 'ppm',
+    '-input-format', 'pnm',
     '-output-format', 'svg',
     '-output-file', outputPath,
     '-color-count', String(params.colorCount),
@@ -189,6 +190,7 @@ async function buildAutoTraceColorCandidate({ inputPath, options = {}, onProgres
       lineReversionThreshold: preset.lineReversionThreshold,
       tangentSurround: preset.tangentSurround,
       removeAdjacentCorners: true,
+      inputFormat: source.cliInputHandler,
       outputFormat: 'svg',
       outline: true
     };
@@ -216,6 +218,7 @@ async function buildAutoTraceColorCandidate({ inputPath, options = {}, onProgres
       preprocessing: {
         source: source.quantization,
         inputFormat: source.inputFormat,
+        cliInputHandler: source.cliInputHandler,
         backgroundColor: params.backgroundColor,
         paletteColors: colorCount,
         actualPaletteColors: source.actualPaletteColors,
