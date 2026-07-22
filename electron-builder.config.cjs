@@ -3,6 +3,11 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const sharp = require('sharp');
+const {
+  autoTraceEnvironment,
+  manifestExecutable,
+  readRuntimeManifest
+} = require('./src/main/services/autotraceRuntimeService');
 
 const runtimeDirectory = path.resolve(__dirname, 'vendor', 'upscayl', `${process.platform}-${process.arch}`);
 const autoTraceDirectory = path.resolve(__dirname, 'vendor', 'autotrace', `${process.platform}-${process.arch}`);
@@ -54,12 +59,10 @@ function packagedResourcesDirectory(context) {
 async function validatePackagedAutoTrace(context) {
   const resourcesDirectory = packagedResourcesDirectory(context);
   if (!resourcesDirectory) return;
-  const executable = path.join(
-    resourcesDirectory,
-    'autotrace-runtime',
-    'bin',
-    context.electronPlatformName === 'win32' ? 'autotrace.exe' : 'autotrace'
-  );
+  const runtimeRoot = path.join(resourcesDirectory, 'autotrace-runtime');
+  const manifest = readRuntimeManifest(runtimeRoot);
+  if (!manifest) throw new Error(`Installer thiếu runtime manifest: ${path.join(runtimeRoot, 'runtime.json')}`);
+  const executable = manifestExecutable(runtimeRoot, context.electronPlatformName);
   if (!fs.existsSync(executable)) throw new Error(`Installer thiếu AutoTrace runtime: ${executable}`);
   if (context.electronPlatformName === 'darwin') fs.chmodSync(executable, 0o755);
 
@@ -67,7 +70,7 @@ async function validatePackagedAutoTrace(context) {
   const inputPath = path.join(workspace, 'fixture.png');
   const outputPath = path.join(workspace, 'fixture.svg');
   await createPngFixture(inputPath);
-  const env = {
+  let env = {
     ...process.env,
     HOME: workspace,
     AUTOTRACE_BINARY: '',
@@ -76,6 +79,7 @@ async function validatePackagedAutoTrace(context) {
     MAGICK_CONFIGURE_PATH: ''
   };
   if (context.electronPlatformName === 'darwin') env.PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
+  env = autoTraceEnvironment(executable, env);
 
   try {
     const result = spawnSync(executable, [
@@ -87,6 +91,7 @@ async function validatePackagedAutoTrace(context) {
       '-despeckle-level', '0',
       inputPath
     ], {
+      cwd: path.dirname(executable),
       encoding: 'utf8',
       windowsHide: true,
       timeout: 30000,
@@ -99,7 +104,7 @@ async function validatePackagedAutoTrace(context) {
     if (!/<svg\b/i.test(svg) || !/<(?:path|polygon|polyline)\b/i.test(svg)) {
       throw new Error('Packaged AutoTrace không tạo SVG hợp lệ.');
     }
-    console.log(`Packaged AutoTrace verified in ${resourcesDirectory}`);
+    console.log(`Packaged AutoTrace verified in ${resourcesDirectory} using ${manifest.runtimeLayout?.executable || executable}`);
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }
