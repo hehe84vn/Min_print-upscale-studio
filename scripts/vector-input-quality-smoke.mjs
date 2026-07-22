@@ -4,8 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
 import qualityModule from '../src/main/services/vectorInputQualityService.js';
+import vectorModule from '../src/main/services/vectorLogoService.js';
 
 const { analyzeVectorInput, formatVectorInputRejection } = qualityModule;
+const { applyConservativeInputPolicy } = vectorModule;
 const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'vector-input-quality-'));
 const crispPath = path.join(workspace, 'crisp-logo.png');
 const softPath = path.join(workspace, 'soft-small-logo.jpg');
@@ -35,7 +37,43 @@ try {
   assert.ok(soft.gate.reasons.length > 0);
   assert.match(formatVectorInputRejection(soft), /Không thể vector hóa đáng tin cậy/);
 
-  console.log(`Vector Input Gate OK: crisp ${crisp.gate.status} ${crisp.gate.score}, soft ${soft.gate.status} ${soft.gate.score}.`);
+  const smallCrisp = applyConservativeInputPolicy({
+    logoBounds: { width: 73, height: 54 },
+    contrastRange: 255,
+    foregroundCoveragePercent: 32.31,
+    edge: { sharpnessScore: 77.04, transitionWidthPx: 2.19 },
+    stroke: { minimumStrokePx: 5 },
+    gate: {
+      status: 'reject',
+      score: 39.7,
+      reasons: ['Vùng logo chỉ dài 73px, không đủ dữ liệu hình học.'],
+      warnings: []
+    }
+  });
+  assert.equal(smallCrisp.gate.status, 'review', JSON.stringify(smallCrisp, null, 2));
+  assert.equal(smallCrisp.gate.policy, 'downgraded-to-review');
+  assert.equal(smallCrisp.gate.sizeRisk, true);
+  assert.equal(smallCrisp.gate.severeSignalCount, 0);
+  assert.ok(smallCrisp.gate.warnings.some((warning) => warning.includes('73px')));
+
+  const smallDestroyed = applyConservativeInputPolicy({
+    logoBounds: { width: 73, height: 54 },
+    contrastRange: 24,
+    foregroundCoveragePercent: 0.08,
+    edge: { sharpnessScore: 9, transitionWidthPx: 7.2 },
+    stroke: { minimumStrokePx: 1.1 },
+    gate: {
+      status: 'reject',
+      score: 18,
+      reasons: ['Ảnh mất dữ liệu hình học.'],
+      warnings: []
+    }
+  });
+  assert.equal(smallDestroyed.gate.status, 'reject', JSON.stringify(smallDestroyed, null, 2));
+  assert.equal(smallDestroyed.gate.policy, 'conservative-reject');
+  assert.ok(smallDestroyed.gate.severeSignalCount >= 2);
+
+  console.log(`Vector Input Gate OK: crisp ${crisp.gate.status} ${crisp.gate.score}, soft ${soft.gate.status} ${soft.gate.score}, small crisp ${smallCrisp.gate.status}.`);
 } finally {
   await fs.rm(workspace, { recursive: true, force: true });
 }
