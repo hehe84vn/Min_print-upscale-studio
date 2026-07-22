@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data:; img-src 'self' file: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self';" />
-  <title>Print Upscale Studio V2.5 Color Output</title>
+  <title>Print Upscale Studio V2.7 Smart Production</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -12,7 +12,7 @@
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark">PU</div>
-        <div><strong>Print Upscale</strong><span>Studio V2.5 · Color Output</span></div>
+        <div><strong>Print Upscale</strong><span>Studio V2.7 · Smart Production</span></div>
       </div>
 
       <nav id="toolNav" class="tool-nav">
@@ -26,7 +26,7 @@
 
       <button id="appSettingsBtn" class="settings-button" type="button">
         <span>⚙</span>
-        <span>Cài đặt<small>AI Provider & Color Output</small></span>
+        <span>Cài đặt<small>AI · Color · Storage</small></span>
       </button>
 
       <section class="engine-card">
@@ -114,6 +114,8 @@
               <option value="2">2×</option>
               <option value="3">3×</option>
               <option value="4">4×</option>
+              <option value="6">6× · AI 4× + Lanczos</option>
+              <option value="8">8× · AI 4× + Lanczos</option>
             </select>
           </div>
 
@@ -206,6 +208,7 @@
   <script src="app.js"></script>
   <script src="packaging-safe-ui.js"></script>
   <script src="color-output-ui.js"></script>
+  <script src="smart-production-ui.js"></script>
   <script src="zoom.js"></script>
 </body>
 </html>
