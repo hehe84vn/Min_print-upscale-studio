@@ -1,7 +1,7 @@
 {
   "name": "print-upscale-studio",
-  "version": "2.6.2",
-  "description": "Hybrid local and cloud AI image enhancement toolkit for print workflows, with storage hygiene, RGB quality checks and structurally verified ICC-managed CMYK TIFF output including macOS ColorSync and Model Lab copies.",
+  "version": "2.6.3",
+  "description": "Hybrid local and cloud AI image enhancement toolkit for print workflows, with compact collapsible Model Lab results, storage hygiene, RGB quality checks and structurally verified ICC-managed CMYK TIFF output.",
   "main": "src/main/main.js",
   "author": "ngoctunguyenle@gmail.com",
   "license": "MIT",
