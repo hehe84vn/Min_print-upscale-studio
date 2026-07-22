@@ -1,7 +1,7 @@
 {
   "name": "print-upscale-studio",
-  "version": "2.6.3",
-  "description": "Hybrid local and cloud AI image enhancement toolkit for print workflows, with compact collapsible Model Lab results, storage hygiene, RGB quality checks and structurally verified ICC-managed CMYK TIFF output.",
+  "version": "2.7.0",
+  "description": "Smart print production workflow with local image analysis, sequential batch queue, target print sizing, stable 2x to 8x output, RGB quality checks and structurally verified ICC-managed CMYK TIFF copies.",
   "main": "src/main/main.js",
   "author": "ngoctunguyenle@gmail.com",
   "license": "MIT",
@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "lint": "node scripts/check-syntax.mjs",
-    "test:smoke": "node scripts/smoke-test.mjs && node scripts/cmyk-structure-smoke.mjs",
+    "test:smoke": "node scripts/smoke-test.mjs && node scripts/cmyk-structure-smoke.mjs && node scripts/smart-production-smoke.mjs",
     "check": "npm run lint && npm run test:smoke",
     "runtime:fetch": "node scripts/fetch-upscayl-runtime.mjs",
     "profiles:fetch": "node scripts/fetch-color-profiles.mjs",
