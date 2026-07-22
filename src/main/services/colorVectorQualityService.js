@@ -20,7 +20,7 @@ function svgColors(text) {
   };
 
   for (const match of source.matchAll(/(?:fill|stroke|stop-color)\s*=\s*['"]([^'"]+)['"]/gi)) add(match[1]);
-  for (const match of source.matchAll(/(?:^|[;{])\s*(?:fill|stroke|stop-color)\s*:\s*([^;}"']+)/gim)) add(match[1]);
+  for (const match of source.matchAll(/\b(?:fill|stroke|stop-color)\s*:\s*([^;}"']+)/gi)) add(match[1]);
   return [...colors];
 }
 
