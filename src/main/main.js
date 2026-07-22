@@ -6,6 +6,7 @@ const { SettingsService } = require('./services/settingsService');
 const { SecureSecretsService } = require('./services/secureSecretsService');
 const engineService = require('./services/engineService');
 const benchmarkService = require('./services/benchmarkService');
+const colorOutputService = require('./services/colorOutputService');
 const { inspectImage, processImage, suggestedOutput } = require('./services/imageService');
 const { testConnection } = require('./services/aiProviderService');
 
@@ -38,7 +39,7 @@ function createWindow() {
     minWidth: 1040,
     minHeight: 700,
     backgroundColor: '#111317',
-    title: 'Print Upscale Studio V2.4 Packaging Preflight',
+    title: 'Print Upscale Studio V2.5 Color Output',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -147,6 +148,40 @@ function registerIpc() {
       settingsService,
       onProgress: (percent, message) => emitProgress(percent, message)
     });
+  });
+
+  ipcMain.handle('color:settings:get', () => colorOutputService.getSettingsSummary(settingsService));
+
+  ipcMain.handle('color:settings:save', async (_event, payload = {}) => {
+    const normalized = colorOutputService.normalizeSettings(payload);
+    await settingsService.write({ colorOutput: normalized });
+    return colorOutputService.getSettingsSummary(settingsService);
+  });
+
+  ipcMain.handle('color:select-profile', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Chọn ICC profile của nhà in',
+      properties: ['openFile'],
+      filters: [{ name: 'ICC color profile', extensions: ['icc', 'icm'] }]
+    });
+    return result.canceled ? null : result.filePaths[0];
+  });
+
+  ipcMain.handle('color:convert', async (_event, payload = {}) => {
+    emitProgress(95, 'Đang tạo CMYK production copy');
+    const saved = await settingsService.read();
+    const settings = colorOutputService.normalizeSettings({
+      ...(saved.colorOutput || {}),
+      ...(payload.settings || {})
+    });
+    const result = await colorOutputService.convertToCmyk({
+      inputPath: payload.inputPath,
+      outputPath: payload.outputPath || null,
+      settings,
+      dpi: payload.dpi || 300
+    });
+    emitProgress(100, 'CMYK copy hoàn tất');
+    return result;
   });
 
   ipcMain.handle('engine:status', () => engineService.getStatus(settingsService));
