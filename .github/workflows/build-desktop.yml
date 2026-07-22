@@ -55,6 +55,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify bundled AutoTrace without a separate installation
         run: npm run autotrace:smoke-runtime
+      - name: Upload Windows AutoTrace runtime diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autotrace-runtime-diagnostics-windows-x64
+          path: runtime-smoke-diagnostics.json
+          if-no-files-found: warn
       - name: Run vector smoke tests with bundled AutoTrace
         run: npm run test:smoke
       - name: Build Windows V2.9.4 installers and verify packaged runtime
@@ -88,6 +95,13 @@ jobs:
         run: npm run autotrace:prepare -- --platform darwin --arch arm64 --strict
       - name: Verify bundled AutoTrace with Homebrew removed from PATH
         run: npm run autotrace:smoke-runtime
+      - name: Upload Apple Silicon AutoTrace runtime diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autotrace-runtime-diagnostics-macos-arm64
+          path: runtime-smoke-diagnostics.json
+          if-no-files-found: warn
       - name: Run vector smoke tests with bundled AutoTrace
         run: npm run test:smoke
       - name: Build macOS Apple Silicon V2.9.4 DMG and verify packaged runtime
@@ -121,6 +135,13 @@ jobs:
         run: npm run autotrace:prepare -- --platform darwin --arch x64 --strict
       - name: Verify bundled AutoTrace with Homebrew removed from PATH
         run: npm run autotrace:smoke-runtime
+      - name: Upload Intel AutoTrace runtime diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autotrace-runtime-diagnostics-macos-x64
+          path: runtime-smoke-diagnostics.json
+          if-no-files-found: warn
       - name: Run vector smoke tests with bundled AutoTrace
         run: npm run test:smoke
       - name: Build macOS Intel V2.9.4 DMG and verify packaged runtime
