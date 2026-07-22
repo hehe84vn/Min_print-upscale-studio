@@ -56,12 +56,12 @@ function sessionStamp() {
 
 function ensureScale(value) {
   const scale = Number(value);
-  return [2, 3, 4].includes(scale) ? scale : 2;
+  return [2, 3, 4, 6, 8].includes(scale) ? scale : 2;
 }
 
 function ensureDpi(value) {
   const dpi = Number(value);
-  return [150, 200, 300].includes(dpi) ? dpi : 300;
+  return [150, 200, 240, 300].includes(dpi) ? dpi : 300;
 }
 
 function ensureBlendStrength(value) {
