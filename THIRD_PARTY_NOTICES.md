@@ -42,6 +42,18 @@ Data Matrix, Code 128, EAN and UPC.
 Code values are processed locally. Benchmark reports store a SHA-256 digest and
 a short preview instead of relying on a remote scanning service.
 
+## ECI ICC colour profiles
+
+Desktop builds can bundle unchanged ICC profiles downloaded from the European
+Color Initiative (ECI), including ISO Coated v2, PSO Coated v3 and PSO Uncoated
+v3 (FOGRA52). Source and package documentation are included beside the profiles.
+
+- https://www.eci.org/doku.php?id=en:downloads
+
+The selected profile must match the actual print condition. Bundling a profile
+does not make an output file production-ready and does not replace printer
+specifications, separation checks, TAC checks or contract proofing.
+
 ## Runtime libraries
 
 - Electron: MIT
@@ -50,5 +62,5 @@ a short preview instead of relying on a remote scanning service.
 - `@neplex/vectorizer`: MIT, Node.js bindings based on VTracer
 - VTracer: MIT
 
-Before commercial distribution, perform a full dependency and model-weight
-license audit. This notice is not legal advice.
+Before commercial distribution, perform a full dependency, profile-distribution
+and model-weight license audit. This notice is not legal advice.
