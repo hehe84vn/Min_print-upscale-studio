@@ -1,7 +1,7 @@
 {
   "name": "print-upscale-studio",
-  "version": "2.9.0",
-  "description": "Multi-engine vector workflow with conservative input quality gating, Potrace as the primary monochrome tracer, and VTracer fallback for resilience and color artwork.",
+  "version": "2.9.1",
+  "description": "Multi-engine vector workflow with conservative input quality gating, runtime-aware Potrace routing for monochrome artwork, and VTracer fallback for resilience and color artwork.",
   "main": "src/main/main.js",
   "author": "ngoctunguyenle@gmail.com",
   "license": "MIT",
