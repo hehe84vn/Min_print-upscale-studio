@@ -1,6 +1,7 @@
 const path = require('node:path');
 
 const runtimeDirectory = path.resolve(__dirname, 'vendor', 'upscayl', `${process.platform}-${process.arch}`);
+const colorProfilesDirectory = path.resolve(__dirname, 'vendor', 'color-profiles');
 
 module.exports = {
   appId: 'vn.min.printupscalestudio',
@@ -20,6 +21,11 @@ module.exports = {
     {
       from: runtimeDirectory,
       to: 'upscayl-runtime',
+      filter: ['**/*']
+    },
+    {
+      from: colorProfilesDirectory,
+      to: 'color-profiles',
       filter: ['**/*']
     }
   ],
