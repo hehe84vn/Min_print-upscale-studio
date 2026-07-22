@@ -10,6 +10,7 @@ const vectorEngine = require('./vectorLogoEngine');
 const { requireAutoTraceRuntime } = require('./autotraceRuntimeService');
 
 const execFileAsync = promisify(execFile);
+const REVIEW_SIZE = 640;
 
 const PRESETS = {
   detail: {
@@ -60,6 +61,75 @@ function rgbBuffer(data, info) {
     output[targetOffset + 2] = data[sourceOffset + 2] ?? value;
   }
   return output;
+}
+
+function luminance(data, offset, channels) {
+  const red = data[offset];
+  const green = data[offset + 1] ?? red;
+  const blue = data[offset + 2] ?? red;
+  return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+}
+
+function compareColorPixels(source, rendered, info) {
+  const channels = info.channels;
+  let error = 0;
+  let sourceEdges = 0;
+  let renderedEdges = 0;
+  let intersection = 0;
+  for (let offset = 0; offset < source.length; offset += channels) {
+    error += Math.abs(source[offset] - rendered[offset]);
+    error += Math.abs((source[offset + 1] ?? source[offset]) - (rendered[offset + 1] ?? rendered[offset]));
+    error += Math.abs((source[offset + 2] ?? source[offset]) - (rendered[offset + 2] ?? rendered[offset]));
+  }
+  for (let y = 1; y < info.height; y += 1) {
+    for (let x = 1; x < info.width; x += 1) {
+      const offset = (y * info.width + x) * channels;
+      const left = offset - channels;
+      const above = offset - info.width * channels;
+      const sourceGradient = Math.abs(luminance(source, offset, channels) - luminance(source, left, channels))
+        + Math.abs(luminance(source, offset, channels) - luminance(source, above, channels));
+      const renderedGradient = Math.abs(luminance(rendered, offset, channels) - luminance(rendered, left, channels))
+        + Math.abs(luminance(rendered, offset, channels) - luminance(rendered, above, channels));
+      const sourceEdge = sourceGradient >= 26;
+      const renderedEdge = renderedGradient >= 26;
+      if (sourceEdge) sourceEdges += 1;
+      if (renderedEdge) renderedEdges += 1;
+      if (sourceEdge && renderedEdge) intersection += 1;
+    }
+  }
+  const fidelity = Math.max(0, 100 * (1 - error / (Math.max(1, source.length / channels) * 3 * 255)));
+  const precision = intersection / Math.max(1, renderedEdges);
+  const recall = intersection / Math.max(1, sourceEdges);
+  const edgeAgreement = precision + recall ? (2 * precision * recall) / (precision + recall) * 100 : 100;
+  return {
+    fidelity: Number(fidelity.toFixed(2)),
+    edgeAgreement: Number(edgeAgreement.toFixed(2)),
+    edgePrecision: Number((precision * 100).toFixed(2)),
+    edgeRecall: Number((recall * 100).toFixed(2))
+  };
+}
+
+async function colorReference(inputPath) {
+  return sharp(inputPath, { failOn: 'none' })
+    .rotate()
+    .flatten({ background: '#ffffff' })
+    .removeAlpha()
+    .resize({ width: REVIEW_SIZE, height: REVIEW_SIZE, fit: 'inside', withoutEnlargement: false, kernel: sharp.kernel.lanczos3 })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+}
+
+async function assessColorSvg(svg, reference) {
+  const rendered = await sharp(Buffer.from(svg), { density: 144, failOn: 'none' })
+    .flatten({ background: '#ffffff' })
+    .resize(reference.info.width, reference.info.height, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
+    .removeAlpha()
+    .raw()
+    .toBuffer();
+  return {
+    ...compareColorPixels(reference.data, rendered, reference.info),
+    ...vectorEngine.inspectSvgComplexity(svg)
+  };
 }
 
 async function prepareAutoTracePpm(inputPath, outputPath, options = {}) {
@@ -150,8 +220,8 @@ async function buildAutoTraceColorCandidate({ inputPath, options = {}, onProgres
       multipassIterations: 2
     }));
     svg = normalizeSvgCanvas(svg, source);
-    const reference = await vectorEngine.comparisonReference(inputPath, { monochrome: false });
-    const metrics = await vectorEngine.assessSvg(svg, reference, { monochrome: false });
+    const reference = await colorReference(inputPath);
+    const metrics = await assessColorSvg(svg, reference);
     return {
       id: preset.id,
       label: preset.label,
@@ -183,7 +253,10 @@ async function buildAutoTraceColorCandidate({ inputPath, options = {}, onProgres
 
 module.exports = {
   PRESETS,
+  assessColorSvg,
   buildAutoTraceColorCandidate,
+  colorReference,
+  compareColorPixels,
   normalizeSvgCanvas,
   prepareAutoTracePpm,
   presetForStrategy,
