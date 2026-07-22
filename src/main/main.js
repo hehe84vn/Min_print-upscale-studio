@@ -8,12 +8,15 @@ const engineService = require('./services/engineService');
 const benchmarkService = require('./services/benchmarkService');
 const colorOutputService = require('./services/colorOutputService');
 const storageHygieneService = require('./services/storageHygieneService');
+const { analyzeImage } = require('./services/smartAnalyzerService');
+const { ProductionQueue } = require('./services/productionWorkflowService');
 const { inspectImage, processImage, suggestedOutput } = require('./services/imageService');
 const { testConnection } = require('./services/aiProviderService');
 
 let mainWindow;
 let settingsService;
 let secureSecretsService;
+let productionQueue;
 
 const AI_PROVIDERS = new Set(['gemini', 'openai']);
 const AI_SECRET_NAMES = {
@@ -49,12 +52,12 @@ function normalizeStorageSettings(value = {}) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1380,
-    height: 900,
-    minWidth: 1040,
-    minHeight: 700,
+    width: 1440,
+    height: 920,
+    minWidth: 1080,
+    minHeight: 720,
     backgroundColor: '#111317',
-    title: 'Print Upscale Studio V2.6 Storage & Model Lab CMYK',
+    title: 'Print Upscale Studio V2.7 Smart Production',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -70,6 +73,12 @@ function createWindow() {
 function emitProgress(percent, message = '') {
   if (!mainWindow?.isDestroyed()) {
     mainWindow.webContents.send('job:progress', { percent, message });
+  }
+}
+
+function emitProductionStatus(status) {
+  if (!mainWindow?.isDestroyed()) {
+    mainWindow.webContents.send('production:status', status);
   }
 }
 
@@ -114,6 +123,15 @@ function registerIpc() {
     return result.canceled ? null : result.filePaths[0];
   });
 
+  ipcMain.handle('file:select-batch-inputs', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Chọn ảnh cho Smart Production',
+      properties: ['openFile', 'multiSelections'],
+      filters: [IMAGE_FILTER]
+    });
+    return result.canceled ? [] : result.filePaths;
+  });
+
   ipcMain.handle('file:select-reference', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Chọn ảnh Photoshop Reference',
@@ -148,8 +166,17 @@ function registerIpc() {
     return result.canceled ? null : result.filePaths[0];
   });
 
+  ipcMain.handle('production:select-output-directory', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Chọn thư mục lưu Smart Production',
+      properties: ['openDirectory', 'createDirectory']
+    });
+    return result.canceled ? null : result.filePaths[0];
+  });
+
   ipcMain.handle('file:url', async (_event, filePath) => pathToFileURL(filePath).href);
   ipcMain.handle('image:metadata', async (_event, filePath) => inspectImage(filePath));
+  ipcMain.handle('smart:analyze', async (_event, payload = {}) => analyzeImage(payload.inputPath, payload.options || {}));
 
   ipcMain.handle('image:process', async (_event, payload) => {
     if (!payload?.inputPath || !payload?.outputPath) throw new Error('Thiếu đường dẫn đầu vào hoặc đầu ra.');
@@ -163,6 +190,25 @@ function registerIpc() {
     emitProgress(100, 'Hoàn tất');
     return { outputPath };
   });
+
+  ipcMain.handle('production:start', async (_event, payload = {}) => {
+    const saved = await settingsService.read();
+    return productionQueue.start({
+      inputs: payload.inputs || [],
+      outputDirectory: payload.outputDirectory,
+      settings: {
+        ...(payload.settings || {}),
+        colorOutputSettings: {
+          ...(saved.colorOutput || {}),
+          ...(payload.settings?.colorOutputSettings || {})
+        }
+      }
+    });
+  });
+  ipcMain.handle('production:pause', () => productionQueue.pause());
+  ipcMain.handle('production:resume', () => productionQueue.resume());
+  ipcMain.handle('production:retry-failed', () => productionQueue.retryFailed());
+  ipcMain.handle('production:status', () => productionQueue.getStatus());
 
   ipcMain.handle('benchmark:presets', () => benchmarkService.listPresets());
 
@@ -317,6 +363,11 @@ app.whenReady().then(async () => {
   settingsService = new SettingsService(app.getPath('userData'));
   secureSecretsService = new SecureSecretsService(app.getPath('userData'));
   storageHygieneService.configureSharpCache();
+  productionQueue = new ProductionQueue({
+    settingsService,
+    secureSecretsService,
+    onStatus: emitProductionStatus
+  });
 
   try {
     const saved = await settingsService.read();
