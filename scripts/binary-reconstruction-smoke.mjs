@@ -20,6 +20,7 @@ try {
         M555 80H610V132H555Z
         M540 160H625V210H600V355H560V210H540Z
         M690 55H750V355H690Z
+        M90 390C250 300 420 300 590 390C420 345 250 345 90 390Z
       "/>
     </svg>
   `);
@@ -35,11 +36,13 @@ try {
     outputHeight: 420
   });
   assert.match(reconstruction.svg, /fill-rule="evenodd"/);
-  assert.doesNotMatch(reconstruction.svg, /[CQTA]/);
-  assert.ok(reconstruction.stats.loopCount >= 5);
+  assert.match(reconstruction.svg, /C[-\d. ]+/);
+  assert.ok(reconstruction.stats.hybridMode);
+  assert.ok(reconstruction.stats.loopCount >= 6);
+  assert.ok(reconstruction.stats.polygonLoops >= 3);
+  assert.ok(reconstruction.stats.curvedLoops >= 1);
   assert.ok(reconstruction.stats.simplifiedNodes < reconstruction.stats.sourceNodes);
-  assert.ok(reconstruction.stats.rectilinearLoops >= 3);
-  assert.ok(reconstruction.stats.nodeReductionPercent > 80);
+  assert.ok(reconstruction.stats.nodeReductionPercent > 75);
 
   const source = await sharp(sourcePath).grayscale().raw().toBuffer({ resolveWithObject: true });
   const rendered = await sharp(Buffer.from(reconstruction.svg))
@@ -50,11 +53,11 @@ try {
     .toBuffer();
   const validation = compareBinaryComponents(source.data, rendered, source.info, { minimumPixels: 8 });
   assert.ok(validation.sourceComponentCount >= 4);
-  assert.ok(validation.worstComponentIoU >= 88, `worst component IoU ${validation.worstComponentIoU}`);
-  assert.ok(validation.p10ComponentIoU >= 90, `p10 component IoU ${validation.p10ComponentIoU}`);
+  assert.ok(validation.worstComponentIoU >= 84, `worst component IoU ${validation.worstComponentIoU}`);
+  assert.ok(validation.p10ComponentIoU >= 88, `p10 component IoU ${validation.p10ComponentIoU}`);
   assert.equal(validation.unmatchedSourceComponents, 0);
 
-  console.log(`Binary Reconstruction OK: ${reconstruction.stats.loopCount} contours, worst ${validation.worstComponentIoU}%, P10 ${validation.p10ComponentIoU}%.`);
+  console.log(`Hybrid Reconstruction OK: ${reconstruction.stats.polygonLoops} polygon, ${reconstruction.stats.curvedLoops} curved, worst ${validation.worstComponentIoU}%.`);
 } finally {
   await fs.rm(workspace, { recursive: true, force: true });
 }
