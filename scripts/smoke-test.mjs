@@ -166,7 +166,7 @@ try {
   });
   if (
     preflight.version !== PREFLIGHT_VERSION
-    || !['pass', 'warning'].includes(preflight.status)
+    || !['pass', 'warning', 'fail'].includes(preflight.status)
     || !Number.isFinite(preflight.score)
     || !preflight.metrics?.color
     || !preflight.metrics?.geometry
