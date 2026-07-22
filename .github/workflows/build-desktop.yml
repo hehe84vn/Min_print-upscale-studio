@@ -50,7 +50,7 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: Bundle official AutoTrace Windows x64 runtime
-        run: npm run autotrace:prepare -- --platform win32 --arch x64 --strict
+        run: npm run autotrace:prepare:win
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify bundled AutoTrace without a separate installation
