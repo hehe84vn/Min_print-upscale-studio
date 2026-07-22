@@ -9,12 +9,12 @@ import qualityModule from '../src/main/services/colorVectorQualityService.js';
 import vectorModule from '../src/main/services/vectorLogoEngine.js';
 
 const { detectAutoTraceRuntime } = runtimeModule;
-const { buildAutoTraceColorCandidate, prepareFlatPalettePpm } = autoTraceModule;
+const { buildAutoTraceColorCandidate, prepareFlatPalettePng } = autoTraceModule;
 const { inspectColorVectorQuality, rankColorCandidates } = qualityModule;
 const { scoreCandidates } = vectorModule;
 const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'autotrace-vector-smoke-'));
 const inputPath = path.join(workspace, 'flat-color-source.png');
-const ppmPath = path.join(workspace, 'flat-color-source.ppm');
+const palettePath = path.join(workspace, 'flat-color-palette.png');
 
 try {
   for (const [platform, arch] of [['darwin', 'arm64'], ['darwin', 'x64'], ['win32', 'x64']]) {
@@ -36,12 +36,13 @@ try {
     </svg>
   `);
   await sharp(artwork).png().toFile(inputPath);
-  const source = await prepareFlatPalettePpm(inputPath, ppmPath, { paletteColors: 8 });
-  const ppm = await fs.readFile(ppmPath);
-  assert.match(ppm.subarray(0, 32).toString('ascii'), /^P6\n760 460\n255\n/);
+  const source = await prepareFlatPalettePng(inputPath, palettePath, { paletteColors: 8 });
+  const palette = await fs.readFile(palettePath);
+  assert.deepEqual([...palette.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
   assert.equal(source.width, 760);
   assert.equal(source.height, 460);
-  assert.equal(source.inputFormat, 'ppm-p6');
+  assert.equal(source.inputFormat, 'png-palette');
+  assert.equal(source.cliInputHandler, 'png');
   assert.equal(source.quantization, 'sharp-palette-no-dither');
   assert.ok(source.actualPaletteColors <= 8, `quantized palette must stay <= 8, got ${source.actualPaletteColors}`);
 
@@ -86,6 +87,7 @@ try {
     assert.equal(candidate.trace.algorithm, 'autotrace-spline');
     assert.equal(candidate.trace.runtime.available, true);
     assert.equal(candidate.trace.params.colorCount, 8);
+    assert.equal(candidate.trace.params.inputFormat, 'png');
     assert.ok(candidate.trace.params.cornerThreshold < 90);
     assert.ok(candidate.trace.params.filterIterations >= 4);
     assert.match(candidate.svg, /viewBox="0 0 760 460"/);
