@@ -25,7 +25,7 @@
     const notice = settings.querySelector('.notice');
     if (notice) {
       notice.classList.add('smart-vector-notice');
-      notice.innerHTML = '<b>Smart Vector</b><span class="smart-vector-badge">INPUT QUALITY GATE</span><br>Ảnh quá mờ, quá nhỏ hoặc mất dữ liệu hình học sẽ bị chặn trước khi chạy engine trace.';
+      notice.innerHTML = '<b>Smart Vector Router</b><span class="smart-vector-badge">MULTI-ENGINE V2.9.1</span><br>Logo đơn sắc ưu tiên Potrace; ảnh màu dùng VTracer. Nếu runtime Potrace thiếu, ứng dụng tự fallback và báo đúng engine thực tế.';
     }
 
     const colorMode = get('colorMode');
@@ -73,12 +73,12 @@
 
     const reconstruction = document.createElement('label');
     reconstruction.className = 'check-row binary-reconstruction-row';
-    reconstruction.innerHTML = '<input id="vectorBinaryReconstruction" type="checkbox" checked><span>Hybrid Contour Reconstruction: polygon cho cạnh thẳng, Bézier cho contour cong</span>';
+    reconstruction.innerHTML = '<input id="vectorBinaryReconstruction" type="checkbox" checked><span>Hybrid Contour Reconstruction: fallback kiểm tra hình học, không còn là engine chính</span>';
     geometryLock.insertAdjacentElement('afterend', reconstruction);
 
     const hint = document.createElement('p');
     hint.className = 'smart-vector-hint';
-    hint.textContent = 'Input Quality Gate đo vùng logo thực, độ nét cạnh, transition width, nét nhỏ nhất, tương phản và JPEG artifact trước khi trace.';
+    hint.textContent = 'Input Quality Gate chạy trước router. Report sẽ ghi engine, runtime target, preset, tham số, fidelity, component và lý do fallback.';
     reconstruction.insertAdjacentElement('afterend', hint);
 
     const turd = get('turdSize');
@@ -144,6 +144,13 @@
     const component = metrics.componentValidation || {};
     const input = report.inputQuality || {};
     const inputGate = input.gate || {};
+    const router = report.engineRouter || {};
+    const runtime = router.runtime || {};
+    const actualEngine = router.actualEngine || router.selectedEngine || selected.trace?.engine || 'unknown';
+    const fallbackLine = router.fallbackReason
+      ? `Fallback: Potrace → VTracer · ${router.fallbackReason}`
+      : null;
+    const engineLine = `Engine thực tế: ${actualEngine}${runtime.target ? ` · ${runtime.target}` : ''}${runtime.packageVersion ? ` · v${runtime.packageVersion}` : ''}`;
     const mode = selected.label || report.selectedCandidate;
     const sourceMode = report.autoMonochrome
       ? `Tự nhận diện đơn sắc ${report.source?.analysis?.confidence ?? '—'}%`
@@ -169,9 +176,11 @@
     const quality = report.qualityGate?.status === 'pass' ? 'PASS' : 'REVIEW';
     return [
       `Đã lưu SVG: ${outputPath}`,
+      engineLine,
+      fallbackLine,
       inputLine,
       `${quality} · ${mode} · điểm ${report.selectedScore}/100 · ${sourceMode}`,
-      `Fidelity ${metrics.fidelity ?? '—'}% · Edge ${metrics.edgeAgreement ?? '—'}%`,
+      `Fidelity ${metrics.fidelity ?? metrics.foregroundIoU ?? '—'}% · Edge ${metrics.edgeAgreement ?? '—'}%`,
       geometryLine,
       componentLine,
       `${metrics.pathCount ?? '—'} path · khoảng ${metrics.nodeEstimate ?? '—'} node · ${metrics.colorCount ?? '—'} màu`,
@@ -195,7 +204,7 @@
       get('progressWrap').hidden = false;
       get('resultBox').hidden = true;
       get('progressBar').style.width = '1%';
-      get('progressText').textContent = 'Đang kiểm tra độ nét, kích thước logo và JPEG artifact...';
+      get('progressText').textContent = 'Đang kiểm tra input và chọn engine vector...';
 
       const response = await window.studio.process({
         operation: 'vector-logo',
@@ -235,10 +244,10 @@
   function syncVectorBrand(event) {
     const button = event.target.closest('.nav-item');
     if (!button || button.dataset.tool !== 'vector-logo') return;
-    document.title = 'Print Upscale Studio V2.8.4 Input Quality Gate';
+    document.title = 'Print Upscale Studio V2.9.1 Multi-Engine Vector Core';
     const brandVersion = document.querySelector('.brand span');
-    if (brandVersion) brandVersion.textContent = 'Studio V2.8.4 · Input Quality Gate';
-    get('toolDescription').textContent = 'Chặn ảnh quá mờ trước trace; sau đó mới chạy Smart Vector candidates.';
+    if (brandVersion) brandVersion.textContent = 'Studio V2.9.1 · Multi-Engine Vector';
+    get('toolDescription').textContent = 'Smart Router: Potrace cho logo đơn sắc, VTracer cho ảnh màu, fallback có báo engine thực tế.';
   }
 
   installStyles();
