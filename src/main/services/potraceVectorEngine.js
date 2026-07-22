@@ -1,7 +1,5 @@
 'use strict';
 
-const fs = require('node:fs/promises');
-
 const PRESETS = {
   detail: {
     id: 'potrace-detail',
@@ -64,7 +62,7 @@ function traceWithPotrace(inputPath, params) {
       minority: potrace.Potrace?.TURNPOLICY_MINORITY ?? potrace.TURNPOLICY_MINORITY
     };
 
-    const options = {
+    potrace.trace(inputPath, {
       threshold: 128,
       blackOnWhite: true,
       color: '#000000',
@@ -74,9 +72,7 @@ function traceWithPotrace(inputPath, params) {
       optCurve: params.optCurve,
       optTolerance: params.optTolerance,
       turnPolicy: turnPolicyMap[params.turnPolicy] ?? turnPolicyMap.minority
-    };
-
-    potrace.trace(inputPath, options, (error, svg) => {
+    }, (error, svg) => {
       if (error) reject(error);
       else resolve(String(svg));
     });
@@ -90,7 +86,7 @@ function selectedPotracePresets(strategy = 'smart') {
   return [PRESETS.balanced, PRESETS.detail, PRESETS.smooth];
 }
 
-async function buildPotraceCandidate({ inputPath, preset, source, optimize, assessSvg, effective }) {
+async function buildPotraceCandidate({ inputPath, preset, source, optimize, assessSvg }) {
   const traced = await traceWithPotrace(inputPath, preset);
   const restored = normalizeSvgCanvas(traced, source);
   const optimized = String(await optimize(restored, {
@@ -118,7 +114,7 @@ async function buildPotraceCandidate({ inputPath, preset, source, optimize, asse
     },
     reconstruction: null,
     geometryLock: null,
-    metrics: await assessSvg(optimized, effective),
+    metrics: await assessSvg(optimized),
     svg: optimized
   };
 }
