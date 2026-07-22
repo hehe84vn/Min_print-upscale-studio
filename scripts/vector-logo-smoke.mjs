@@ -4,8 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
 import vectorModule from '../src/main/services/vectorLogoService.js';
+import runtimeModule from '../src/main/services/potraceRuntimeService.js';
 
 const { vectorizeLogo, inspectSvgComplexity, selectedCandidateKeys, safeBackgroundCleanup } = vectorModule;
+const { detectPotraceRuntime } = runtimeModule;
 const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'vector-logo-smoke-'));
 const colorInputPath = path.join(workspace, 'color-logo-source.png');
 const cleanedPath = path.join(workspace, 'logo-cleaned.png');
@@ -14,6 +16,14 @@ const monoInputPath = path.join(workspace, 'mono-logo-source.jpg');
 const monoOutputPath = path.join(workspace, 'mono-logo-vector.svg');
 
 try {
+  for (const [platform, arch] of [['darwin', 'arm64'], ['darwin', 'x64'], ['win32', 'x64']]) {
+    const runtime = detectPotraceRuntime({ platform, arch });
+    assert.equal(runtime.supportedTarget, true, `${platform}-${arch} must be recognized`);
+    assert.equal(runtime.runtimeType, 'node-package');
+    assert.equal(runtime.binaryRequired, false);
+  }
+  assert.equal(detectPotraceRuntime({ platform: 'linux', arch: 'arm64' }).supportedTarget, false);
+
   const colorArtwork = Buffer.from(`
     <svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420">
       <rect width="640" height="420" fill="#fff"/>
@@ -65,6 +75,7 @@ try {
         M730 70H790V350H730Z
         M810 75H835V102H810Z
         M805 125H840V350H805Z
+        M590 170C590 110 640 70 700 70C760 70 810 110 810 170C810 230 760 270 700 270C640 270 590 230 590 170ZM645 170C645 205 670 225 700 225C730 225 755 205 755 170C755 135 730 115 700 115C670 115 645 135 645 170Z
       "/>
     </svg>
   `);
@@ -83,12 +94,16 @@ try {
   const monoSvg = await fs.readFile(monoResult.outputPath, 'utf8');
   const monoReport = JSON.parse(await fs.readFile(monoResult.reportPath, 'utf8'));
   const selected = monoReport.candidates.find((candidate) => candidate.id === monoReport.selectedCandidate);
-  assert.equal(monoReport.schemaVersion, 5);
+  assert.equal(monoReport.schemaVersion, 6);
   assert.equal(monoReport.autoMonochrome, true);
   assert.equal(monoReport.effectiveColorMode, 'binary');
   assert.equal(monoReport.source.traceScale, 1, 'monochrome logo must stay at original resolution');
   assert.equal(monoReport.engineRouter.selectedEngine, 'potrace');
+  assert.equal(monoReport.engineRouter.actualEngine, 'potrace-js');
   assert.equal(monoReport.engineRouter.fallbackEngine, 'vtracer');
+  assert.equal(monoReport.engineRouter.runtime.supportedTarget, true);
+  assert.equal(monoReport.engineRouter.runtime.available, true);
+  assert.match(monoReport.engineRouter.runtime.packageLicense, /GPL/i);
   assert.ok(monoReport.candidates.some((candidate) => candidate.trace.engine === 'potrace-js'));
   assert.ok(selected);
   assert.ok(Number.isFinite(selected.metrics.foregroundIoU));
@@ -97,6 +112,7 @@ try {
   assert.equal(selected.metrics.componentValidation.unmatchedSourceComponents, 0);
   assert.ok(selected.metrics.colorCount <= 2, 'monochrome result must not contain grayscale color layers');
   assert.match(monoSvg, /viewBox="0 0 900 420"/);
+  assert.match(monoSvg, /fill-rule="evenodd"/i, 'counter and holes must use evenodd fill rule');
   assert.match(monoSvg, /[Cc]/, 'Potrace should output smooth cubic curves');
   assert.ok(['pass', 'review'].includes(monoReport.qualityGate.status));
 
