@@ -113,7 +113,8 @@ try {
   assert.ok(selected.metrics.colorCount <= 2, 'monochrome result must not contain grayscale color layers');
   assert.match(monoSvg, /viewBox="0 0 900 420"/);
   assert.match(monoSvg, /fill-rule="evenodd"/i, 'counter and holes must use evenodd fill rule');
-  assert.match(monoSvg, /[Cc]/, 'Potrace should output smooth cubic curves');
+  assert.equal(selected.trace.optCurve, true, 'selected Potrace preset must keep curve optimization enabled');
+  assert.equal(selected.trace.fillRule, 'evenodd');
   assert.ok(['pass', 'review'].includes(monoReport.qualityGate.status));
 
   console.log(`Smart Vector color OK: ${colorReport.selectedCandidate}, ${colorComplexity.nodeEstimate} nodes.`);

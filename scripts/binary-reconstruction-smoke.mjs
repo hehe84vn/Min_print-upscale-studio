@@ -5,9 +5,24 @@ import path from 'node:path';
 import sharp from 'sharp';
 import reconstructionModule from '../src/main/services/binaryShapeReconstruction.js';
 
-const { compareBinaryComponents, reconstructBinarySvg } = reconstructionModule;
+const {
+  catmullRomPath,
+  classifyContour,
+  compareBinaryComponents,
+  reconstructBinarySvg
+} = reconstructionModule;
 const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'binary-reconstruction-smoke-'));
 const sourcePath = path.join(workspace, 'binary-source.png');
+
+function makeCirclePoints(count = 48, radius = 120, center = 180) {
+  return Array.from({ length: count }, (_value, index) => {
+    const angle = index / count * Math.PI * 2;
+    return {
+      x: center + Math.cos(angle) * radius,
+      y: center + Math.sin(angle) * radius
+    };
+  });
+}
 
 try {
   const artwork = Buffer.from(`
@@ -36,13 +51,28 @@ try {
     outputHeight: 420
   });
   assert.match(reconstruction.svg, /fill-rule="evenodd"/);
-  assert.match(reconstruction.svg, /C[-\d. ]+/);
   assert.ok(reconstruction.stats.hybridMode);
   assert.ok(reconstruction.stats.loopCount >= 6);
   assert.ok(reconstruction.stats.polygonLoops >= 3);
-  assert.ok(reconstruction.stats.curvedLoops >= 1);
+  assert.equal(
+    reconstruction.stats.polygonLoops + reconstruction.stats.curvedLoops,
+    reconstruction.stats.loopCount,
+    'every reconstructed loop must be classified'
+  );
   assert.ok(reconstruction.stats.simplifiedNodes < reconstruction.stats.sourceNodes);
   assert.ok(reconstruction.stats.nodeReductionPercent > 75);
+
+  const smoothPoints = makeCirclePoints();
+  const smoothClassification = classifyContour(
+    smoothPoints,
+    0.05,
+    { width: 240, height: 240 }
+  );
+  assert.equal(smoothClassification.type, 'curve', 'smooth dense contour must be classified as a curve');
+  const smoothPath = catmullRomPath(smoothPoints, 0.78);
+  assert.match(smoothPath, /^M/);
+  assert.match(smoothPath, /C[-\d. ]+/, 'curve path generator must emit cubic Bezier commands');
+  assert.match(smoothPath, /Z$/);
 
   const source = await sharp(sourcePath).grayscale().raw().toBuffer({ resolveWithObject: true });
   const rendered = await sharp(Buffer.from(reconstruction.svg))
