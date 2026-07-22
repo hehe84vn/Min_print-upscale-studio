@@ -5,14 +5,17 @@ const sharp = require('sharp');
 const { runNcnnUpscale } = require('./engineService');
 const { enhanceImage } = require('./aiProviderService');
 
+const MAX_SCALE = 8;
+
 function ensureScale(value) {
   const scale = Number(value);
-  return [2, 3, 4].includes(scale) ? scale : 2;
+  if (!Number.isFinite(scale)) return 2;
+  return Math.max(1, Math.min(MAX_SCALE, scale));
 }
 
 function ensureDpi(value) {
   const dpi = Number(value);
-  return [150, 200, 300].includes(dpi) ? dpi : 300;
+  return [150, 200, 240, 300].includes(dpi) ? dpi : 300;
 }
 
 async function dimensions(inputPath, scale) {
@@ -45,12 +48,12 @@ async function writeRaster(pipeline, outputPath, options = {}) {
 
 async function upscaleFallback(inputPath, outputPath, scale, options, onProgress) {
   const size = await dimensions(inputPath, scale);
-  onProgress?.(15, 'Đang phóng lớn bằng chế độ tương thích');
+  onProgress?.(15, scale > 4 ? `AI 4× không khả dụng, đang resize Lanczos đến ${Number(scale.toFixed(2))}×` : 'Đang phóng lớn bằng chế độ tương thích');
   let pipeline = sharp(inputPath, { failOn: 'none' })
     .rotate()
     .resize(size.width, size.height, { kernel: sharp.kernel.lanczos3 });
 
-  if (options.sharpen !== false) pipeline = pipeline.sharpen({ sigma: 1.1, m1: 0.8, m2: 2.2 });
+  if (options.sharpen !== false && scale > 1) pipeline = pipeline.sharpen({ sigma: 1.1, m1: 0.8, m2: 2.2 });
 
   onProgress?.(70, 'Đang hoàn thiện ảnh');
   await writeRaster(pipeline, outputPath, options);
@@ -60,12 +63,21 @@ async function upscaleFallback(inputPath, outputPath, scale, options, onProgress
 
 async function upscale({ settingsService, inputPath, outputPath, options, onProgress }) {
   const scale = ensureScale(options.scale);
+  if (scale <= 1.001) {
+    onProgress?.(20, 'Ảnh nguồn đã đủ kích thước, đang chuẩn hóa đầu ra');
+    await writeRaster(sharp(inputPath, { failOn: 'none' }).rotate(), outputPath, options);
+    onProgress?.(100, 'Hoàn tất');
+    return outputPath;
+  }
+
   if (options.useNcnn !== false) {
+    let tempPng = null;
     try {
-      const tempPng = path.extname(outputPath).toLowerCase() === '.png'
+      tempPng = path.extname(outputPath).toLowerCase() === '.png'
         ? outputPath
         : path.join(os.tmpdir(), `local-enhance-${Date.now()}-${Math.random().toString(16).slice(2)}.png`);
 
+      if (scale > 4) onProgress?.(2, `AI 4× + Lanczos đến ${Number(scale.toFixed(2))}×`);
       await runNcnnUpscale({
         settingsService,
         inputPath,
@@ -76,16 +88,16 @@ async function upscale({ settingsService, inputPath, outputPath, options, onProg
       });
 
       if (tempPng !== outputPath) {
-        try {
-          await writeRaster(sharp(tempPng, { failOn: 'none' }), outputPath, options);
-        } finally {
-          await fs.rm(tempPng, { force: true });
-        }
+        await writeRaster(sharp(tempPng, { failOn: 'none' }), outputPath, options);
       }
       return outputPath;
     } catch (error) {
       if (!options.allowFallback) throw error;
       onProgress?.(8, `Bộ xử lý cục bộ không chạy: ${error.message}. Chuyển sang chế độ tương thích.`);
+    } finally {
+      if (tempPng && tempPng !== outputPath) {
+        await fs.rm(tempPng, { force: true }).catch(() => {});
+      }
     }
   }
   return upscaleFallback(inputPath, outputPath, scale, options, onProgress);
@@ -223,7 +235,7 @@ async function inspectImage(inputPath) {
   if (!metadata.width || !metadata.height) throw new Error('Không đọc được thông tin ảnh.');
 
   const printSizes = {};
-  for (const dpi of [150, 200, 300]) {
+  for (const dpi of [150, 200, 240, 300]) {
     printSizes[dpi] = {
       widthCm: Number(((metadata.width / dpi) * 2.54).toFixed(1)),
       heightCm: Number(((metadata.height / dpi) * 2.54).toFixed(1))
@@ -266,4 +278,4 @@ function suggestedOutput(inputPath, operation, extension = null) {
   return path.join(parsed.dir, `${parsed.name}-${suffixes[operation] || 'output'}${normalizedExtension}`);
 }
 
-module.exports = { inspectImage, processImage, suggestedOutput };
+module.exports = { MAX_SCALE, ensureScale, inspectImage, processImage, suggestedOutput, writeRaster };
