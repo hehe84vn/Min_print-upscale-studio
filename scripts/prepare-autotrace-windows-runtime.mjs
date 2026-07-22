@@ -9,8 +9,6 @@ const args = process.argv.slice(2);
 const strict = args.includes('--strict');
 const repositoryRoot = path.resolve(import.meta.dirname, '..');
 const targetRoot = path.join(repositoryRoot, 'vendor', 'autotrace', 'win32-x64');
-const binDirectory = path.join(targetRoot, 'bin');
-const preparedExecutable = path.join(binDirectory, 'autotrace.exe');
 const githubToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
 const userAgent = 'Print-Upscale-Studio-AutoTrace-Windows-Runtime';
 
@@ -103,27 +101,6 @@ async function findFiles(directory, predicate, output = []) {
   return output;
 }
 
-function scoreExecutable(filePath, size) {
-  const normalized = filePath.replaceAll('\\', '/').toLowerCase();
-  let score = Math.min(50, Math.floor(size / 100000));
-  if (normalized.endsWith('/bin/autotrace.exe')) score += 1000;
-  if (normalized.includes('/$pluginsdir/') || normalized.includes('/plugin/')) score -= 500;
-  if (normalized.includes('uninstall')) score -= 1000;
-  return score;
-}
-
-async function chooseExecutable(extracted) {
-  const candidates = await findFiles(extracted, (filePath) => path.basename(filePath).toLowerCase() === 'autotrace.exe');
-  const scored = [];
-  for (const filePath of candidates) {
-    const stat = await fs.stat(filePath);
-    scored.push({ filePath, size: stat.size, score: scoreExecutable(filePath, stat.size) });
-  }
-  scored.sort((left, right) => right.score - left.score || right.size - left.size);
-  if (!scored.length) throw new Error('Không tìm thấy autotrace.exe trong installer Windows.');
-  return { selected: scored[0], candidates: scored };
-}
-
 async function createPngFixture(outputPath) {
   const svg = Buffer.from(`
     <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
@@ -134,49 +111,29 @@ async function createPngFixture(outputPath) {
   await sharp(svg).png({ palette: true, colours: 2, dither: 0 }).toFile(outputPath);
 }
 
-async function copyOfficialLayout(extracted, selection) {
-  const executableDirectory = path.dirname(selection.selected.filePath);
-  const hasBinLayout = path.basename(executableDirectory).toLowerCase() === 'bin';
-  const installRoot = hasBinLayout ? path.dirname(executableDirectory) : executableDirectory;
-
-  await fs.rm(targetRoot, { recursive: true, force: true });
-  await fs.mkdir(targetRoot, { recursive: true });
-  await fs.cp(installRoot, targetRoot, { recursive: true, force: true, dereference: true });
-
-  if (!await exists(preparedExecutable)) {
-    await fs.mkdir(binDirectory, { recursive: true });
-    await fs.cp(executableDirectory, binDirectory, { recursive: true, force: true, dereference: true });
-  }
-  if (!await exists(preparedExecutable)) throw new Error('Layout đã copy nhưng thiếu bin/autotrace.exe.');
-
-  const licenseFiles = await findFiles(installRoot, (filePath) => /(?:copying|license)(?:\.[^.]+)?$/i.test(path.basename(filePath)));
-  if (!licenseFiles.length) {
-    await download(`https://raw.githubusercontent.com/autotrace/autotrace/${VERSION}/COPYING`, path.join(targetRoot, 'COPYING'));
-  }
-
-  const layoutFiles = (await findFiles(targetRoot, () => true)).map((filePath) => path.relative(targetRoot, filePath).replaceAll('\\', '/'));
-  await fs.writeFile(path.join(targetRoot, 'source-layout.json'), `${JSON.stringify({
-    selectedSourceExecutable: path.relative(extracted, selection.selected.filePath).replaceAll('\\', '/'),
-    selectedSize: selection.selected.size,
-    selectedScore: selection.selected.score,
-    installRoot: path.relative(extracted, installRoot).replaceAll('\\', '/'),
-    candidates: selection.candidates.map((candidate) => ({
-      path: path.relative(extracted, candidate.filePath).replaceAll('\\', '/'),
-      size: candidate.size,
-      score: candidate.score
-    })),
-    files: layoutFiles
-  }, null, 2)}\n`, 'utf8');
-  return layoutFiles;
+async function runtimeDirectories(root) {
+  const files = await findFiles(root, (filePath) => {
+    const name = path.basename(filePath).toLowerCase();
+    return name === 'autotrace.exe' || name.endsWith('.dll');
+  });
+  return [...new Set(files.map((filePath) => path.dirname(filePath)))];
 }
 
-async function validatePreparedRuntime(layoutFiles) {
+function runtimeEnvironment(searchDirectories) {
+  return {
+    ...process.env,
+    PATH: [...searchDirectories, process.env.PATH || ''].filter(Boolean).join(';')
+  };
+}
+
+async function validateExecutable(executable, installRoot, label) {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'autotrace-win-verify-'));
   try {
     const inputPath = path.join(workspace, 'fixture.png');
     const outputPath = path.join(workspace, 'fixture.svg');
     await createPngFixture(inputPath);
-    const result = spawnSync(preparedExecutable, [
+    const searchDirectories = await runtimeDirectories(installRoot);
+    const result = spawnSync(executable, [
       '-input-format', 'png',
       '-output-format', 'svg',
       '-output-file', outputPath,
@@ -185,56 +142,132 @@ async function validatePreparedRuntime(layoutFiles) {
       '-despeckle-level', '0',
       inputPath
     ], {
+      cwd: path.dirname(executable),
       encoding: 'utf8',
       windowsHide: true,
       timeout: 30000,
-      env: { ...process.env, PATH: `${binDirectory};${process.env.PATH || ''}` }
+      env: runtimeEnvironment(searchDirectories)
     });
     const output = `${result.stdout || ''}\n${result.stderr || ''}`.trim();
-    if (result.error || result.status !== 0) {
-      throw new Error(`AutoTrace Windows runtime không khởi động (${result.status}): ${result.error?.message || output || 'không có output'} · files: ${layoutFiles.slice(0, 80).join(', ')}`);
+    let svgBytes = 0;
+    let svgValid = false;
+    if (!result.error && result.status === 0 && await exists(outputPath)) {
+      const svg = await fs.readFile(outputPath, 'utf8');
+      svgBytes = Buffer.byteLength(svg, 'utf8');
+      svgValid = /<svg\b/i.test(svg) && /<(?:path|polygon|polyline)\b/i.test(svg);
     }
-    const svg = await fs.readFile(outputPath, 'utf8');
-    if (!/<svg\b/i.test(svg)) throw new Error('AutoTrace Windows runtime không tạo SVG.');
-    return { status: result.status, output, svgBytes: Buffer.byteLength(svg, 'utf8') };
+    return {
+      label,
+      executable,
+      relativeExecutable: path.relative(installRoot, executable).replaceAll('\\', '/'),
+      status: result.status,
+      error: result.error?.message || null,
+      output,
+      svgBytes,
+      svgValid,
+      succeeded: !result.error && result.status === 0 && svgValid,
+      searchPaths: searchDirectories.map((directory) => path.relative(installRoot, directory).replaceAll('\\', '/') || '.')
+    };
   } finally {
     await fs.rm(workspace, { recursive: true, force: true });
   }
 }
 
-async function writeManifest(validation, layoutFiles) {
+async function installOfficialRuntime(installer, installRoot) {
+  await fs.rm(installRoot, { recursive: true, force: true });
+  await fs.mkdir(installRoot, { recursive: true });
+  // The upstream Windows package is NSIS. Running it matters: raw 7-Zip
+  // extraction skips installer layout/setup logic and produced exit code 127.
+  execFileSync(installer, ['/S', `/D=${installRoot}`], {
+    stdio: 'inherit',
+    windowsHide: true,
+    timeout: 120000
+  });
+  const executables = await findFiles(installRoot, (filePath) => path.basename(filePath).toLowerCase() === 'autotrace.exe');
+  if (!executables.length) throw new Error(`Installer silent hoàn tất nhưng không tạo autotrace.exe trong ${installRoot}.`);
+  return executables;
+}
+
+async function chooseWorkingExecutable(installRoot, executables) {
+  const attempts = [];
+  for (const executable of executables) {
+    const attempt = await validateExecutable(executable, installRoot, 'installed-runtime');
+    attempts.push(attempt);
+    if (attempt.succeeded) return { selected: attempt, attempts };
+  }
+  throw new Error(`Không executable AutoTrace nào trace PNG→SVG thành công sau khi cài silent: ${JSON.stringify(attempts)}`);
+}
+
+async function ensureLicense(installRoot) {
+  const licenseFiles = await findFiles(installRoot, (filePath) => /(?:copying|license)(?:\.[^.]+)?$/i.test(path.basename(filePath)));
+  if (!licenseFiles.length) {
+    await download(`https://raw.githubusercontent.com/autotrace/autotrace/${VERSION}/COPYING`, path.join(installRoot, 'COPYING'));
+  }
+}
+
+async function copyInstalledRuntime(installRoot, selection) {
+  await ensureLicense(installRoot);
+  await fs.rm(targetRoot, { recursive: true, force: true });
+  await fs.mkdir(targetRoot, { recursive: true });
+  await fs.cp(installRoot, targetRoot, { recursive: true, force: true, dereference: true });
+
+  const relativeExecutable = selection.selected.relativeExecutable;
+  const preparedExecutable = path.join(targetRoot, ...relativeExecutable.split('/'));
+  if (!await exists(preparedExecutable)) throw new Error(`Runtime đã copy nhưng thiếu ${relativeExecutable}.`);
+  const validation = await validateExecutable(preparedExecutable, targetRoot, 'bundled-runtime');
+  if (!validation.succeeded) throw new Error(`Runtime bundled không chạy được: ${JSON.stringify(validation)}`);
+
+  const layoutFiles = (await findFiles(targetRoot, () => true))
+    .map((filePath) => path.relative(targetRoot, filePath).replaceAll('\\', '/'));
+  const searchPaths = validation.searchPaths;
+  await fs.writeFile(path.join(targetRoot, 'source-layout.json'), `${JSON.stringify({
+    installationMode: 'official-nsis-silent-install',
+    selectedSourceExecutable: relativeExecutable,
+    candidates: selection.attempts,
+    files: layoutFiles
+  }, null, 2)}\n`, 'utf8');
+
+  return { preparedExecutable, relativeExecutable, validation, layoutFiles, searchPaths };
+}
+
+async function writeManifest(prepared) {
   const manifest = {
     version: VERSION,
     target: 'win32-x64',
     preparedAt: new Date().toISOString(),
-    binaryPath: preparedExecutable,
+    binaryPath: prepared.preparedExecutable,
     bundled: true,
-    relocatable: null,
-    bundledLibraryCount: layoutFiles.filter((name) => name.toLowerCase().endsWith('.dll')).length,
-    runtimeLayout: { executable: 'bin/autotrace.exe', libraries: 'preserved official installer layout' },
-    validation,
+    relocatable: true,
+    bundledLibraryCount: prepared.layoutFiles.filter((name) => name.toLowerCase().endsWith('.dll')).length,
+    runtimeLayout: {
+      executable: prepared.relativeExecutable,
+      libraries: 'preserved official installed layout',
+      searchPaths: prepared.searchPaths
+    },
+    validation: prepared.validation,
     license: 'GPL-2.0-or-later',
     upstream: 'https://github.com/autotrace/autotrace'
   };
   await fs.writeFile(path.join(targetRoot, 'runtime.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-  if (process.env.GITHUB_ENV) await fs.appendFile(process.env.GITHUB_ENV, `AUTOTRACE_BINARY=${preparedExecutable}\n`, 'utf8');
+  if (process.env.GITHUB_ENV) {
+    await fs.appendFile(process.env.GITHUB_ENV, `AUTOTRACE_BINARY=${prepared.preparedExecutable}\n`, 'utf8');
+  }
   return manifest;
 }
 
 let workspace = null;
 try {
+  if (process.platform !== 'win32') throw new Error(`Windows runtime phải được chuẩn bị trên Windows, host hiện tại là ${process.platform}.`);
   const asset = await discoverAsset();
   if (!asset) throw new Error(`Release AutoTrace ${VERSION} không có Windows x64 installer.`);
   workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'autotrace-win-runtime-'));
   const installer = path.join(workspace, asset.name);
-  const extracted = path.join(workspace, 'extracted');
-  await fs.mkdir(extracted, { recursive: true });
+  const installRoot = path.join(workspace, 'installed');
   await download(asset.url || asset.browser_download_url, installer);
-  execFileSync('7z', ['x', installer, `-o${extracted}`, '-y'], { stdio: 'inherit', windowsHide: true });
-  const selection = await chooseExecutable(extracted);
-  const layoutFiles = await copyOfficialLayout(extracted, selection);
-  const validation = await validatePreparedRuntime(layoutFiles);
-  const manifest = await writeManifest(validation, layoutFiles);
+  const executables = await installOfficialRuntime(installer, installRoot);
+  const selection = await chooseWorkingExecutable(installRoot, executables);
+  const prepared = await copyInstalledRuntime(installRoot, selection);
+  const manifest = await writeManifest(prepared);
   console.log(`AutoTrace Windows runtime ready: ${JSON.stringify(manifest)}`);
 } catch (error) {
   if (strict) throw error;
