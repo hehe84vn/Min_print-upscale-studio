@@ -1,5 +1,6 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const os = require('node:os');
 const sharp = require('sharp');
 const { analyzeImage, MAX_SCALE, SAFE_OUTPUT_PIXELS, normalizeFixedScale, normalizeScale } = require('./smartAnalyzerService');
 const { processImage } = require('./imageService');
@@ -66,6 +67,40 @@ async function summarizeFile(filePath) {
     channels: metadata.channels || null,
     density: metadata.density || null,
     sizeBytes: stat.size
+  };
+}
+
+async function availableDiskBytes(directory) {
+  try {
+    const stats = await fs.statfs(directory);
+    const blockSize = Number(stats.bsize || stats.frsize || 0);
+    const availableBlocks = Number(stats.bavail ?? stats.bfree ?? 0);
+    if (!Number.isFinite(blockSize) || !Number.isFinite(availableBlocks)) return null;
+    return blockSize * availableBlocks;
+  } catch {
+    return null;
+  }
+}
+
+async function assertResourceSafety({ outputDirectory, analysis }) {
+  const pixels = Number(analysis?.output?.pixels) || 0;
+  const estimatedOutputBytes = Number(analysis?.output?.totalBytes) || 0;
+  const estimatedWorkingMemory = pixels * 4 * 4.5;
+  const totalMemory = os.totalmem();
+  if (estimatedWorkingMemory > totalMemory * 0.6) {
+    throw new Error(`Job cần khoảng ${(estimatedWorkingMemory / (1024 ** 3)).toFixed(1)} GB working memory, vượt ngưỡng an toàn của máy. Hãy giảm scale hoặc khổ in.`);
+  }
+
+  const freeDisk = await availableDiskBytes(outputDirectory);
+  const requiredDisk = Math.max(512 * 1024 * 1024, estimatedOutputBytes * 2.25);
+  if (freeDisk != null && freeDisk < requiredDisk) {
+    throw new Error(`Không đủ dung lượng trống. Cần dự phòng khoảng ${(requiredDisk / (1024 ** 3)).toFixed(1)} GB cho RGB, CMYK và file tạm.`);
+  }
+
+  return {
+    estimatedWorkingMemory,
+    freeDisk,
+    requiredDisk
   };
 }
 
@@ -148,6 +183,7 @@ class ProductionQueue {
         progress: 0,
         message: 'Chờ xử lý',
         analysis: null,
+        resourceEstimate: null,
         outputPath: null,
         cmykOutput: null,
         qualityCheck: null,
@@ -263,6 +299,10 @@ class ProductionQueue {
       if (job.analysis.output.pixels > settings.maxOutputPixels) {
         throw new Error(`Ảnh đầu ra ${job.analysis.output.megapixels} MP vượt ngưỡng an toàn ${(settings.maxOutputPixels / 1_000_000).toFixed(0)} MP.`);
       }
+      job.resourceEstimate = await assertResourceSafety({
+        outputDirectory: this.state.outputDirectory,
+        analysis: job.analysis
+      });
 
       const scale = normalizeScale(
         settings.outputMode === 'target-print'
@@ -356,7 +396,7 @@ class ProductionQueue {
       job.progress = 100;
       job.message = 'Hoàn tất';
       job.durationMs = Date.now() - startedAt;
-      this.state.progress = this.overallProgress(100);
+      this.state.progress = this.overallProgress(0);
       this.emit(`${job.fileName}: hoàn tất`);
     } catch (error) {
       job.status = 'failed';
@@ -364,7 +404,7 @@ class ProductionQueue {
       job.message = 'Lỗi';
       job.durationMs = Date.now() - startedAt;
       job.error = error.message || String(error);
-      this.state.progress = this.overallProgress(100);
+      this.state.progress = this.overallProgress(0);
       this.emit(`${job.fileName}: ${job.error}`);
     }
   }
@@ -393,6 +433,7 @@ class ProductionQueue {
 
 module.exports = {
   ProductionQueue,
+  assertResourceSafety,
   normalizeBatchSettings,
   sanitizeName
 };
