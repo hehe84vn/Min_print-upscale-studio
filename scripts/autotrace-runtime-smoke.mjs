@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import sharp from 'sharp';
+import runtimeModule from '../src/main/services/autotraceRuntimeService.js';
 
+const { probeAutoTrace } = runtimeModule;
 const target = `${process.platform}-${process.arch}`;
 const repositoryRoot = path.resolve(import.meta.dirname, '..');
 const runtimeRoot = path.join(repositoryRoot, 'vendor', 'autotrace', target);
@@ -15,6 +16,7 @@ let stage = 'initialize';
 let manifest = null;
 let versionOutput = '';
 let traceOutput = '';
+let runtimeProbe = null;
 
 async function exists(filePath) {
   try {
@@ -26,6 +28,7 @@ async function exists(filePath) {
 }
 
 function run(command, args, options = {}) {
+  const { spawnSync } = require('node:child_process');
   const result = spawnSync(command, args, {
     encoding: 'utf8',
     windowsHide: true,
@@ -68,6 +71,7 @@ async function writeDiagnostics(status, extra = {}) {
     runtimeRoot,
     executable,
     manifest,
+    runtimeProbe,
     versionOutput,
     traceOutput,
     ...extra
@@ -129,16 +133,10 @@ async function main() {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'autotrace-bundled-smoke-'));
   try {
     const env = cleanEnvironment(workspace);
-    stage = 'version-probe';
-    const versionResult = spawnSync(executable, ['-version'], {
-      encoding: 'utf8',
-      windowsHide: true,
-      timeout: 15000,
-      env
-    });
-    versionOutput = `${versionResult.stdout || ''}\n${versionResult.stderr || ''}`.trim();
-    assert.equal(Boolean(versionResult.error), false, versionResult.error?.message);
-    assert.ok(versionResult.status === 0 || /autotrace/i.test(versionOutput), `AutoTrace version probe failed: ${versionOutput}`);
+    stage = 'production-runtime-probe';
+    runtimeProbe = probeAutoTrace(executable, { timeout: 15000 });
+    versionOutput = runtimeProbe.output || '';
+    assert.equal(runtimeProbe.available, true, `Production runtime probe failed: ${JSON.stringify(runtimeProbe.attempts)}`);
 
     stage = 'png-to-svg-trace';
     const inputPath = path.join(workspace, 'fixture.png');
