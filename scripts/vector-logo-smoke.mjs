@@ -3,11 +3,12 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
-import vectorModule from '../src/main/services/vectorLogoEngine.js';
+import vectorModule from '../src/main/services/vectorLogoService.js';
 
-const { vectorizeLogo, inspectSvgComplexity, selectedCandidateKeys } = vectorModule;
+const { vectorizeLogo, inspectSvgComplexity, selectedCandidateKeys, safeBackgroundCleanup } = vectorModule;
 const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'vector-logo-smoke-'));
 const inputPath = path.join(workspace, 'logo-source.png');
+const cleanedPath = path.join(workspace, 'logo-cleaned.png');
 const outputPath = path.join(workspace, 'logo-vector.svg');
 
 try {
@@ -21,6 +22,13 @@ try {
     </svg>
   `);
   await sharp(artwork).png().toFile(inputPath);
+
+  const cleanup = await safeBackgroundCleanup(inputPath, cleanedPath);
+  const cleaned = await sharp(cleanedPath).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const alphaAt = (x, y) => cleaned.data[(y * cleaned.info.width + x) * cleaned.info.channels + 3];
+  assert.equal(cleanup.applied, true);
+  assert.equal(alphaAt(0, 0), 0, 'border background must become transparent');
+  assert.ok(alphaAt(350, 165) >= 240, 'internal white logo detail must remain opaque');
 
   const result = await vectorizeLogo({
     inputPath,
@@ -39,6 +47,7 @@ try {
 
   assert.match(svg, /<svg\b/i);
   assert.equal(report.schemaVersion, 2);
+  assert.equal(report.backgroundCleanup.applied, true);
   assert.ok(selectedCandidateKeys('smart').length >= 3);
   assert.ok(report.candidates.length >= 2);
   assert.ok(report.selectedCandidate);
