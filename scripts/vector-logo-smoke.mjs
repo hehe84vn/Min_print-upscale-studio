@@ -77,33 +77,31 @@ try {
       strategy: 'smart',
       colorMode: 'color',
       backgroundCleanup: true,
-      geometryLock: true,
-      binaryReconstruction: true,
       turdSize: 1
     }
   });
   const monoSvg = await fs.readFile(monoResult.outputPath, 'utf8');
   const monoReport = JSON.parse(await fs.readFile(monoResult.reportPath, 'utf8'));
   const selected = monoReport.candidates.find((candidate) => candidate.id === monoReport.selectedCandidate);
-  assert.equal(monoReport.schemaVersion, 4);
+  assert.equal(monoReport.schemaVersion, 5);
   assert.equal(monoReport.autoMonochrome, true);
   assert.equal(monoReport.effectiveColorMode, 'binary');
-  assert.equal(monoReport.source.traceScale, 1, 'monochrome logo must not be enlarged before threshold and trace');
-  assert.equal(monoReport.geometryLockEnabled, true);
-  assert.equal(monoReport.binaryReconstructionEnabled, true);
-  assert.ok(monoReport.candidates.some((candidate) => candidate.id === 'binary-reconstruction'));
-  assert.ok(monoReport.candidates.some((candidate) => candidate.id === 'geometry-lock'));
+  assert.equal(monoReport.source.traceScale, 1, 'monochrome logo must stay at original resolution');
+  assert.equal(monoReport.engineRouter.selectedEngine, 'potrace');
+  assert.equal(monoReport.engineRouter.fallbackEngine, 'vtracer');
+  assert.ok(monoReport.candidates.some((candidate) => candidate.trace.engine === 'potrace-js'));
   assert.ok(selected);
-  assert.ok(Number.isFinite(selected.metrics.cornerPreservation));
-  assert.ok(Number.isFinite(selected.metrics.straightnessScore));
+  assert.ok(Number.isFinite(selected.metrics.foregroundIoU));
   assert.ok(Number.isFinite(selected.metrics.componentValidation.worstComponentIoU));
   assert.ok(Number.isFinite(selected.metrics.componentValidation.p10ComponentIoU));
+  assert.equal(selected.metrics.componentValidation.unmatchedSourceComponents, 0);
   assert.ok(selected.metrics.colorCount <= 2, 'monochrome result must not contain grayscale color layers');
   assert.match(monoSvg, /viewBox="0 0 900 420"/);
+  assert.match(monoSvg, /[Cc]/, 'Potrace should output smooth cubic curves');
   assert.ok(['pass', 'review'].includes(monoReport.qualityGate.status));
 
   console.log(`Smart Vector color OK: ${colorReport.selectedCandidate}, ${colorComplexity.nodeEstimate} nodes.`);
-  console.log(`Binary Vector mono OK: ${monoReport.selectedCandidate}, worst ${selected.metrics.componentValidation.worstComponentIoU}%, ${selected.metrics.colorCount} colors.`);
+  console.log(`Potrace mono OK: ${monoReport.selectedCandidate}, IoU ${selected.metrics.foregroundIoU}%, worst ${selected.metrics.componentValidation.worstComponentIoU}%.`);
 } finally {
   await fs.rm(workspace, { recursive: true, force: true });
 }
