@@ -100,8 +100,15 @@ async function convertToCmyk({ inputPath, settings = {}, outputPath = null, dpi 
     throw new Error('Chuyển CMYK không thành công: file kết quả không có 4 kênh CMYK.');
   }
 
+  let rgbMasterRemoved = false;
+  if (normalized.outputMode === 'cmyk-only' && path.resolve(inputPath) !== path.resolve(targetPath)) {
+    await fs.rm(inputPath, { force: true });
+    rgbMasterRemoved = true;
+  }
+
   return {
     outputPath: targetPath,
+    rgbMasterRemoved,
     profile,
     settings: normalized,
     metadata: {
