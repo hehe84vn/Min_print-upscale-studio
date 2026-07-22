@@ -145,12 +145,12 @@ async function main() {
     assert.equal(Boolean(versionResult.error), false, versionResult.error?.message);
     assert.ok(versionResult.status === 0 || /autotrace/i.test(versionOutput), `AutoTrace version probe failed: ${versionOutput}`);
 
-    stage = 'ppm-to-svg-trace';
+    stage = 'pnm-to-svg-trace';
     const inputPath = path.join(workspace, 'fixture.ppm');
     const outputPath = path.join(workspace, 'fixture.svg');
     await fs.writeFile(inputPath, ppmFixture());
     traceOutput = run(executable, [
-      '-input-format', 'ppm',
+      '-input-format', 'pnm',
       '-output-format', 'svg',
       '-output-file', outputPath,
       '-color-count', '2',
