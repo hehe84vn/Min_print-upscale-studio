@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -28,7 +29,6 @@ async function exists(filePath) {
 }
 
 function run(command, args, options = {}) {
-  const { spawnSync } = require('node:child_process');
   const result = spawnSync(command, args, {
     encoding: 'utf8',
     windowsHide: true,
