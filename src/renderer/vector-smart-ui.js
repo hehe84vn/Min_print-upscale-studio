@@ -25,7 +25,7 @@
     const notice = settings.querySelector('.notice');
     if (notice) {
       notice.classList.add('smart-vector-notice');
-      notice.innerHTML = '<b>Smart Vector Router</b><span class="smart-vector-badge">MULTI-ENGINE V2.9.2</span><br>Logo đơn sắc ưu tiên Potrace; artwork màu phẳng so sánh VTracer và AutoTrace. Runtime thiếu sẽ fallback và báo đúng engine thực tế.';
+      notice.innerHTML = '<b>Smart Vector Router</b><span class="smart-vector-badge">CURVE-SAFE V2.9.3</span><br>Logo đơn sắc ưu tiên Potrace; artwork màu phẳng so sánh VTracer spline và AutoTrace. Candidate bậc thang hoặc nổ palette sẽ bị loại.';
     }
 
     const colorMode = get('colorMode');
@@ -78,7 +78,7 @@
 
     const hint = document.createElement('p');
     hint.className = 'smart-vector-hint';
-    hint.textContent = 'Input Quality Gate chạy trước router. Report ghi candidate VTracer/AutoTrace, engine thắng, runtime, preset, fidelity, edge agreement, số node và lý do fallback.';
+    hint.textContent = 'Input Quality Gate chạy trước router. V2.9.3 chấm fidelity, edge, Bézier, line density, palette và node; report ghi engine thắng cùng lý do reject/fallback.';
     reconstruction.insertAdjacentElement('afterend', hint);
 
     const turd = get('turdSize');
@@ -143,6 +143,15 @@
     return value || 'Không xác định';
   }
 
+  function candidateSummary(candidate) {
+    const name = engineName(candidate.engine || candidate.trace?.engine);
+    const score = candidate.score ?? '—';
+    const curve = candidate.metrics?.curveFitScore;
+    const palette = candidate.metrics?.paletteScore;
+    const rejected = candidate.rejected ? ' · REJECT' : '';
+    return `${name} ${score}${curve != null ? ` · curve ${curve}` : ''}${palette != null ? ` · palette ${palette}` : ''}${rejected}`;
+  }
+
   function resultText(outputPath, payload) {
     const report = payload?.vectorReport;
     const selected = report?.candidates?.find((candidate) => candidate.id === report.selectedCandidate);
@@ -164,7 +173,7 @@
     const runtimeVersion = runtime.packageVersion || runtime.version;
     const engineLine = `Engine thực tế: ${engineName(actualEngine)}${runtime.target ? ` · ${runtime.target}` : ''}${runtimeVersion ? ` · v${runtimeVersion}` : ''}`;
     const comparisonLine = Array.isArray(report.engineComparison)
-      ? `So engine: ${report.engineComparison.map((candidate) => `${engineName(candidate.engine || candidate.trace?.engine)} ${candidate.score ?? '—'}`).join(' · ')}`
+      ? `So engine: ${report.engineComparison.map(candidateSummary).join(' | ')}`
       : attempted ? `Đã thử: ${attempted}` : null;
     const mode = selected.label || report.selectedCandidate;
     const sourceMode = report.autoMonochrome
@@ -179,6 +188,9 @@
     const geometryLine = report.effectiveColorMode === 'binary'
       ? `Corner ${metrics.cornerPreservation ?? '—'}% · Straight ${metrics.straightnessScore ?? '—'}% · Axis ${metrics.axisAgreement ?? '—'}%`
       : `Fidelity ${metrics.fidelity ?? '—'}% · Edge ${metrics.edgeAgreement ?? '—'}% · Recall ${metrics.edgeRecall ?? '—'}%`;
+    const curveLine = report.effectiveColorMode === 'binary'
+      ? null
+      : `Curve ${metrics.curveFitScore ?? '—'}/100 · Bézier ${metrics.curveCommandCount ?? '—'} · Line ${metrics.lineCommandCount ?? '—'} · Palette ${metrics.paletteScore ?? '—'}/100${metrics.stairStepRisk ? ' · STAIR-STEP RISK' : ''}${metrics.paletteOverflow ? ' · PALETTE OVERFLOW' : ''}`;
     const componentLine = report.effectiveColorMode === 'binary'
       ? `Component: worst ${component.worstComponentIoU ?? '—'}% · P10 ${component.p10ComponentIoU ?? '—'}% · weighted ${component.weightedComponentIoU ?? '—'}%`
       : null;
@@ -197,6 +209,7 @@
       inputLine,
       `${quality} · ${mode} · điểm ${report.selectedScore}/100 · ${sourceMode}`,
       geometryLine,
+      curveLine,
       componentLine,
       `${metrics.pathCount ?? '—'} path · khoảng ${metrics.nodeEstimate ?? '—'} node · ${metrics.colorCount ?? '—'} màu`,
       reconstructionLine,
@@ -259,10 +272,10 @@
   function syncVectorBrand(event) {
     const button = event.target.closest('.nav-item');
     if (!button || button.dataset.tool !== 'vector-logo') return;
-    document.title = 'Print Upscale Studio V2.9.2 AutoTrace Color Router';
+    document.title = 'Print Upscale Studio V2.9.3 Curve-Safe Vector Router';
     const brandVersion = document.querySelector('.brand span');
-    if (brandVersion) brandVersion.textContent = 'Studio V2.9.2 · AutoTrace Color Router';
-    get('toolDescription').textContent = 'Smart Router: Potrace cho logo đơn sắc; VTracer và AutoTrace cạnh tranh cho artwork màu phẳng.';
+    if (brandVersion) brandVersion.textContent = 'Studio V2.9.3 · Curve-Safe Vector';
+    get('toolDescription').textContent = 'Smart Router: Potrace cho đơn sắc; VTracer spline và AutoTrace cạnh tranh bằng fidelity, curve-fit và palette quality.';
   }
 
   installStyles();

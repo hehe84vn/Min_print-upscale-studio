@@ -1,7 +1,7 @@
 {
   "name": "print-upscale-studio",
-  "version": "2.9.2",
-  "description": "Smart multi-engine vector workflow: Potrace for monochrome artwork, VTracer and inherited AutoTrace candidates for flat-color artwork, with quality-ranked selection and explicit fallback reporting.",
+  "version": "2.9.3",
+  "description": "Curve-safe multi-engine vector workflow: Potrace for monochrome artwork, VTracer spline and inherited AutoTrace candidates for flat-color artwork, with curve, palette, fidelity and edge quality gates plus explicit fallback reporting.",
   "main": "src/main/main.js",
   "author": "ngoctunguyenle@gmail.com",
   "license": "MIT",
