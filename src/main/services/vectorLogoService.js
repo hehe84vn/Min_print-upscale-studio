@@ -5,6 +5,10 @@ const path = require('node:path');
 const os = require('node:os');
 const sharp = require('sharp');
 const engine = require('./vectorLogoEngine');
+const {
+  analyzeVectorInput,
+  formatVectorInputRejection
+} = require('./vectorInputQualityService');
 
 const CLEANUP_MAX_DIMENSION = 2400;
 
@@ -116,8 +120,32 @@ async function safeBackgroundCleanup(inputPath, outputPath) {
   };
 }
 
+async function attachInputQuality(result, inputPath, inputQuality, backgroundCleanup = null) {
+  result.vectorReport.inputPath = inputPath;
+  result.vectorReport.inputQuality = inputQuality;
+  if (backgroundCleanup) result.vectorReport.backgroundCleanup = backgroundCleanup;
+  if (inputQuality.gate.status === 'review') {
+    result.vectorReport.warnings = [
+      ...inputQuality.gate.warnings.map((warning) => `Input Quality: ${warning}`),
+      ...(result.vectorReport.warnings || [])
+    ];
+    if (result.vectorReport.qualityGate) result.vectorReport.qualityGate.status = 'review';
+  }
+  await fs.writeFile(result.reportPath, JSON.stringify(result.vectorReport, null, 2), 'utf8');
+  return result;
+}
+
 async function vectorizeLogo(payload) {
   const options = payload.options || {};
+  payload.onProgress?.(2, 'Đang kiểm tra chất lượng ảnh đầu vào');
+  const inputQuality = await analyzeVectorInput(payload.inputPath);
+  if (inputQuality.gate.status === 'reject') {
+    const error = new Error(formatVectorInputRejection(inputQuality));
+    error.code = 'VECTOR_INPUT_REJECTED';
+    error.inputQuality = inputQuality;
+    throw error;
+  }
+
   const sourceAnalysis = await engine.analyzeMonochromeSource(payload.inputPath);
   const forcedBinary = options.colorMode === 'binary';
   const useGeometrySource = forcedBinary || sourceAnalysis.isMonochrome;
@@ -126,10 +154,11 @@ async function vectorizeLogo(payload) {
     && options.colorMode !== 'binary';
 
   if (!shouldCleanup) {
-    return engine.vectorizeLogo({
+    const result = await engine.vectorizeLogo({
       ...payload,
       options: { ...options, sourceAnalysis }
     });
+    return attachInputQuality(result, payload.inputPath, inputQuality);
   }
 
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'print-vector-background-'));
@@ -141,10 +170,7 @@ async function vectorizeLogo(payload) {
       inputPath: cleanup.applied ? cleanedInput : payload.inputPath,
       options: { ...options, backgroundCleanup: false, sourceAnalysis }
     });
-    result.vectorReport.inputPath = payload.inputPath;
-    result.vectorReport.backgroundCleanup = cleanup;
-    await fs.writeFile(result.reportPath, JSON.stringify(result.vectorReport, null, 2), 'utf8');
-    return result;
+    return attachInputQuality(result, payload.inputPath, inputQuality, cleanup);
   } finally {
     await fs.rm(workspace, { recursive: true, force: true });
   }
@@ -152,6 +178,7 @@ async function vectorizeLogo(payload) {
 
 module.exports = {
   ...engine,
+  analyzeVectorInput,
   clearConnectedBorder,
   detectBorderBackground,
   safeBackgroundCleanup,
