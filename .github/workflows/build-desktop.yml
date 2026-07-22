@@ -1,4 +1,4 @@
-name: Build Print Upscale Studio V2.9.1 Multi-Engine Vector Core
+name: Build Print Upscale Studio V2.9.2 AutoTrace Color Router
 
 on:
   workflow_dispatch:
@@ -17,11 +17,13 @@ concurrency:
 
 env:
   UPSCAYL_RELEASE_TAG: v2.15.0
+  AUTOTRACE_VERSION: 0.31.10
+  HOMEBREW_NO_AUTO_UPDATE: 1
 
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -31,13 +33,13 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Run V2.9.1 checks
+      - name: Run V2.9.2 checks with AutoTrace fallback path
         run: npm run check
 
   build-windows:
     needs: validate
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -47,24 +49,26 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Run smoke tests
+      - name: Prepare official AutoTrace Windows x64 runtime
+        run: npm run autotrace:prepare -- --platform win32 --arch x64 --strict
+      - name: Run smoke tests with AutoTrace candidate
         run: npm run test:smoke
-      - name: Build Windows V2.9.1 installers
+      - name: Build Windows V2.9.2 installers
         run: npm run dist:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Upload Windows V2.9.1 installers
+      - name: Upload Windows V2.9.2 installers
         uses: actions/upload-artifact@v4
         with:
-          name: print-upscale-studio-v2.9.1-windows-x64
+          name: print-upscale-studio-v2.9.2-windows-x64
           path: release/*.exe
           if-no-files-found: error
 
   build-macos-arm64:
     needs: validate
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -74,24 +78,28 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Run smoke tests
+      - name: Install AutoTrace through Homebrew
+        run: brew install autotrace
+      - name: Prepare AutoTrace Apple Silicon runtime metadata
+        run: npm run autotrace:prepare -- --platform darwin --arch arm64 --strict
+      - name: Run smoke tests with AutoTrace candidate
         run: npm run test:smoke
-      - name: Build macOS Apple Silicon V2.9.1 DMG
+      - name: Build macOS Apple Silicon V2.9.2 DMG
         run: npm run dist:mac:arm64
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Upload macOS Apple Silicon V2.9.1 DMG
+      - name: Upload macOS Apple Silicon V2.9.2 DMG
         uses: actions/upload-artifact@v4
         with:
-          name: print-upscale-studio-v2.9.1-macos-arm64
+          name: print-upscale-studio-v2.9.2-macos-arm64
           path: release/*.dmg
           if-no-files-found: error
 
   build-macos-x64:
     needs: validate
     runs-on: macos-15-intel
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -101,17 +109,21 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Run smoke tests
+      - name: Install AutoTrace through Homebrew
+        run: brew install autotrace
+      - name: Prepare AutoTrace Intel runtime metadata
+        run: npm run autotrace:prepare -- --platform darwin --arch x64 --strict
+      - name: Run smoke tests with AutoTrace candidate
         run: npm run test:smoke
-      - name: Build macOS Intel V2.9.1 DMG
+      - name: Build macOS Intel V2.9.2 DMG
         run: npm run dist:mac:x64
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Upload macOS Intel V2.9.1 DMG
+      - name: Upload macOS Intel V2.9.2 DMG
         uses: actions/upload-artifact@v4
         with:
-          name: print-upscale-studio-v2.9.1-macos-x64
+          name: print-upscale-studio-v2.9.2-macos-x64
           path: release/*.dmg
           if-no-files-found: error
 
