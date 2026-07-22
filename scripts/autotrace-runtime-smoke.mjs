@@ -150,6 +150,7 @@ async function main() {
     const outputPath = path.join(workspace, 'fixture.svg');
     await fs.writeFile(inputPath, ppmFixture());
     traceOutput = run(executable, [
+      '-input-format', 'ppm',
       '-output-format', 'svg',
       '-output-file', outputPath,
       '-color-count', '2',
