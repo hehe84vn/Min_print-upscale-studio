@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { runGoldenBenchmark, compareBaseline } = require('../src/main/services/vectorGoldenBenchmarkService');
+const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vector-golden-smoke-'));
+const sample = path.join(root, 'samples', 'basic');
+const output = path.join(root, 'results');
+await fs.mkdir(sample, { recursive: true });
+const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect x="10" y="10" width="80" height="80" rx="12" fill="#63b34f"/><circle cx="50" cy="50" r="20" fill="#fff"/></svg>';
+await fs.writeFile(path.join(sample, 'golden.svg'), svg);
+await fs.writeFile(path.join(sample, 'candidate.svg'), svg);
+await fs.writeFile(path.join(root, 'manifest.json'), JSON.stringify({ samples: [{ id: 'basic', group: 'fixture', directory: 'samples/basic' }] }));
+await fs.writeFile(path.join(root, 'thresholds.json'), JSON.stringify({ minimumShapeIoU: 0.99, maximumChangedForegroundRatio: 0.01, maximumMeanChannelDelta: 1, maximumNodeRatio: 1.1, maximumDurationMs: 30000 }));
+const summary = await runGoldenBenchmark({ rootDirectory: root, outputDirectory: output, version: 'smoke' });
+assert.equal(summary.pass, true);
+assert.equal(summary.total, 1);
+for (const name of ['summary.json', 'summary.csv', 'report.html']) await fs.access(path.join(output, name));
+assert.deepEqual(compareBaseline({ shapeIoU: 0.98, foregroundChangedRatio: 0.02, meanColorDelta: 2, nodeRatio: 1.2 }, { shapeIoU: 0.99, foregroundChangedRatio: 0.01, meanColorDelta: 0.5, nodeRatio: 1 }), { available: true, regressions: ['shapeIoU', 'foregroundChangedRatio', 'meanColorDelta', 'nodeRatio'] });
+await fs.rm(root, { recursive: true, force: true });
+console.log('vector golden benchmark smoke passed');
