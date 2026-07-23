@@ -127,6 +127,13 @@ function normalizePathKey(data) {
     .toLowerCase();
 }
 
+function normalizedPaintKey(before, after) {
+  return normalizePathKey(`${before || ''} ${after || ''}`
+    .replace(/\s*\/\s*$/, '')
+    .replace(/\bid=["'][^"']+["']/gi, '')
+    .replace(/\bclass=["'][^"']+["']/gi, ''));
+}
+
 function cleanupVectorSvg(svg, options = {}) {
   const source = String(svg || '');
   const size = parseSvgSize(source);
@@ -161,7 +168,7 @@ function cleanupVectorSvg(svg, options = {}) {
   };
 
   const seen = new Set();
-  const output = source.replace(/<path\b([^>]*?)\bd=(["'])([^"']+)\2([^>]*)\/?\s*>/gi, (match, before, quote, data, after) => {
+  const output = source.replace(/<path\b([^>]*?)\bd=(["'])([^"']+)\2([^>]*?)\/?\s*>/gi, (match, before, quote, data, after) => {
     stats.pathCountBefore += 1;
     try {
       let segments = parsePathData(data);
@@ -195,14 +202,15 @@ function cleanupVectorSvg(svg, options = {}) {
       }
 
       const serialized = serializePathData(segments, precision);
-      const key = normalizePathKey(serialized);
+      const key = `${normalizePathKey(serialized)}|${normalizedPaintKey(before, after)}`;
       if (seen.has(key)) {
         stats.duplicatePathsRemoved += 1;
         return '';
       }
       seen.add(key);
       stats.pathCountAfter += 1;
-      return `<path${before}d=${quote}${serialized}${quote}${after}>`;
+      const cleanAfter = String(after || '').replace(/\s*\/\s*$/, '');
+      return `<path${before}d=${quote}${serialized}${quote}${cleanAfter}/>`;
     } catch {
       stats.parseErrors += 1;
       stats.pathCountAfter += 1;
