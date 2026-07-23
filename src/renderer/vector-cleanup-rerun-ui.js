@@ -30,7 +30,7 @@
         <strong>Tinh chỉnh Clean Vector</strong>
         <span class="smart-vector-badge">NO RETRACE</span>
       </div>
-      <small>Luôn xử lý lại từ Master SVG gốc. Auto thử cả ba profile nhưng chỉ chọn kết quả vượt Safety Gate.</small>
+      <small>Luôn xử lý lại từ Master SVG gốc. Auto thử cả ba profile, sau đó Visual Validation so pixel để chặn biến dạng.</small>
       <div class="vector-cleanup-rerun-actions">
         <select id="vectorCleanupProfile">
           <option value="auto" selected>Auto · app tự chọn an toàn</option>
@@ -72,6 +72,16 @@
     }).join(' | ');
   }
 
+  function visualSummary(validation) {
+    if (!validation || validation.skipped) return '';
+    const metrics = validation.metrics;
+    if (validation.preservedMaster) return 'Visual Validation: cleanup bị reject, đã giữ nguyên Master SVG.';
+    if (!metrics) return validation.fallbackApplied
+      ? `Visual Validation: fallback ${validation.initialProfile} → ${validation.finalProfile}.`
+      : 'Visual Validation: PASS.';
+    return `Visual Validation: ${validation.fallbackApplied ? `fallback ${validation.initialProfile} → ${validation.finalProfile}` : 'PASS'} · Shape IoU ${(metrics.shapeIoU * 100).toFixed(2)}% · changed pixel ${(metrics.changedPixelRatio * 100).toFixed(2)}% · color delta ${metrics.meanChannelDelta}`;
+  }
+
   async function rerunCleanup() {
     if (state.busy || !state.outputPath) return;
     const outputPath = state.outputPath;
@@ -84,8 +94,8 @@
       get('progressWrap').hidden = false;
       get('progressBar').style.width = '5%';
       get('progressText').textContent = profile === 'auto'
-        ? 'Đang thử ba mức cleanup và kiểm tra Safety Gate...'
-        : 'Đang áp dụng cleanup từ Master SVG...';
+        ? 'Đang thử ba mức cleanup, Safety Gate và Visual Validation...'
+        : 'Đang áp dụng cleanup và kiểm tra pixel với Master SVG...';
       setStatus(`Đang chạy ${profile} · không trace lại...`);
 
       const response = await window.studio.process({
@@ -102,15 +112,16 @@
       const selectedProfile = result.selectedProfile || cleanup?.profile || profile;
       const svgUrl = await window.studio.fileUrl(result.outputPath);
       afterImage.src = `${svgUrl}?t=${Date.now()}`;
+      const validation = visualSummary(cleanup?.visualValidation);
       setStatus(cleanup
-        ? `${profile === 'auto' ? `Auto chọn ${selectedProfile}` : selectedProfile}: ${cleanup.nodesBefore} → ${cleanup.nodesAfter} node · giảm ${cleanup.nodeReduction}% · ${cleanup.pathCountAfter} path.`
+        ? `${profile === 'auto' ? `Auto chọn ${selectedProfile}` : selectedProfile}: ${cleanup.nodesBefore} → ${cleanup.nodesAfter} node · giảm ${cleanup.nodeReduction}%${validation ? ` · ${validation}` : ''}`
         : `Đã áp dụng ${selectedProfile} từ Master SVG.`);
 
       const resultBox = get('resultBox');
       resultBox.classList.remove('error');
       resultBox.classList.add('vector-result-lines');
       const comparison = autoSummary(cleanup?.autoSelection);
-      resultBox.textContent = `Đã áp dụng cleanup ${selectedProfile} không trace lại.${profile === 'auto' ? `\nAuto recommendation: ${selectedProfile}` : ''}\nMaster: ${masterPath}\nOutput: ${result.outputPath}${cleanup ? `\nNode: ${cleanup.nodesBefore} → ${cleanup.nodesAfter} · giảm ${cleanup.nodeReduction}%` : ''}${comparison ? `\nSo profile: ${comparison}` : ''}`;
+      resultBox.textContent = `Đã áp dụng cleanup ${selectedProfile} không trace lại.${profile === 'auto' ? `\nAuto recommendation: ${selectedProfile}` : ''}\nMaster: ${masterPath}\nOutput: ${result.outputPath}${cleanup ? `\nNode: ${cleanup.nodesBefore} → ${cleanup.nodesAfter} · giảm ${cleanup.nodeReduction}%` : ''}${comparison ? `\nSo profile: ${comparison}` : ''}${validation ? `\n${validation}` : ''}`;
       resultBox.hidden = false;
     } catch (error) {
       setStatus(error.message || String(error), true);
