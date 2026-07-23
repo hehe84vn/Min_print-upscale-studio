@@ -277,6 +277,15 @@ class LicenseService {
     return verified;
   }
 
+  async _blockNonRetriable(error, fallback = 'License không còn hợp lệ.') {
+    if (!(error instanceof LicenseError) || error.retriable) return false;
+    await this.secure.remove(SECRET.entitlement);
+    this._set(error.code === 'license_required' ? 'signed_out' : 'blocked', false, error.message || fallback, {
+      code: error.code || 'license_validation_failed'
+    });
+    return true;
+  }
+
   async initialize() {
     if (!this.status.configured) {
       return this._set('blocked', false, 'Ứng dụng chưa được cấu hình máy chủ license.', { code: 'license_config_missing' });
@@ -289,9 +298,8 @@ class LicenseService {
       if (error instanceof LicenseError && error.retriable && offline?.active) {
         return this._fromEntitlement(offline, false, 'Không có kết nối máy chủ. App đang dùng quyền offline còn hiệu lực.');
       }
-      return this._set(error?.code === 'license_required' ? 'signed_out' : 'blocked', false, error?.message || 'Không thể xác minh license.', {
-        code: error?.code || 'license_validation_failed'
-      });
+      await this._blockNonRetriable(error, 'Không thể xác minh license.');
+      return this.getCachedStatus();
     }
   }
 
@@ -306,7 +314,12 @@ class LicenseService {
   }
 
   async validateNow() {
-    return this._fromEntitlement(await this._gateway('validate'), true);
+    try {
+      return this._fromEntitlement(await this._gateway('validate'), true);
+    } catch (error) {
+      await this._blockNonRetriable(error);
+      throw error;
+    }
   }
 
   async ensureProcessingAllowed() {
@@ -322,7 +335,7 @@ class LicenseService {
       this._fromEntitlement(await this._gateway('validate'), true);
     } catch (error) {
       if (!(error instanceof LicenseError) || !error.retriable) {
-        this._set('blocked', false, error?.message || 'License không còn hợp lệ.', { code: error?.code || 'license_validation_failed' });
+        await this._blockNonRetriable(error);
         throw error;
       }
       offline = await this._offline();
