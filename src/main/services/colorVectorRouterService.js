@@ -14,8 +14,34 @@ function withoutSvg(candidate) {
   return metadata;
 }
 
-function markVTracerCandidate(candidate) {
+function unavailableColorComponentValidation() {
   return {
+    available: false,
+    reason: 'color-component-analysis-unavailable',
+    sourceComponentCount: null,
+    renderedComponentCount: null,
+    worstComponentIoU: null,
+    p10ComponentIoU: null,
+    medianComponentIoU: null,
+    weightedComponentIoU: null,
+    unmatchedSourceComponents: null,
+    worstComponents: []
+  };
+}
+
+function sanitizeColorCandidate(candidate) {
+  if (!candidate) return candidate;
+  const metrics = { ...(candidate.metrics || {}) };
+  metrics.orientationAgreement = null;
+  metrics.axisAgreement = null;
+  metrics.cornerPreservation = null;
+  metrics.componentScore = null;
+  metrics.componentValidation = unavailableColorComponentValidation();
+  return { ...candidate, metrics };
+}
+
+function markVTracerCandidate(candidate) {
+  return sanitizeColorCandidate({
     ...candidate,
     engine: 'vtracer',
     trace: {
@@ -23,7 +49,7 @@ function markVTracerCandidate(candidate) {
       engine: candidate.trace?.engine || 'vtracer',
       algorithm: candidate.trace?.algorithm || 'vtracer'
     }
-  };
+  });
 }
 
 function selectedCandidateFromReport(report) {
@@ -31,9 +57,9 @@ function selectedCandidateFromReport(report) {
 }
 
 function routedVTracerStrategy(strategy = 'smart') {
-  // Smart color artwork must not allow the polygon-only compact preset to win
-  // merely because it has fewer nodes. Explicit Compact remains available.
-  return strategy === 'smart' ? 'balanced' : strategy;
+  // Smart must exclude the polygon-only compact preset from the VTracer preselection.
+  // The detail route still compares detail and balanced spline candidates internally.
+  return strategy === 'smart' ? 'detail' : strategy;
 }
 
 function routedPaletteColors(strategy = 'smart', requested = null) {
@@ -46,10 +72,12 @@ function routedPaletteColors(strategy = 'smart', requested = null) {
 
 function colorWarnings(candidate) {
   const warnings = [];
-  if (candidate.metrics?.edgeRecall < 75) warnings.push('Edge recall thấp; nên kiểm tra chi tiết nhỏ trong Illustrator.');
+  if (candidate.metrics?.detailLossRisk) warnings.push(`Candidate mất quá nhiều chi tiết nguồn: edge recall ${candidate.metrics.edgeRecall}%.`);
+  else if (candidate.metrics?.edgeRecall < 75) warnings.push('Edge recall thấp; nên kiểm tra chi tiết nhỏ trong Illustrator.');
   if (candidate.metrics?.nodeEstimate > 5000) warnings.push('SVG vẫn có nhiều node; thử chế độ Ít node hoặc giảm số màu.');
   if (candidate.metrics?.stairStepRisk) warnings.push('Candidate có dấu hiệu biên bậc thang và thiếu Bézier; không nên dùng cho logo nhiều đường cong.');
   if (candidate.metrics?.paletteOverflow) warnings.push(`Candidate phát sinh ${candidate.metrics.colorCount} màu, vượt ngân sách ${candidate.metrics.requestedColors} màu phẳng.`);
+  if (candidate.metrics?.paletteValidationAvailable === false) warnings.push('Không đọc được palette của SVG; candidate không đủ điều kiện tự động chọn.');
   if ((candidate.metrics?.curveFitScore ?? 100) < 55) warnings.push('Curve-fit thấp; cần kiểm tra vòng cung và chữ cong ở mức zoom lớn.');
   return warnings;
 }
@@ -60,16 +88,50 @@ async function writeReport(result) {
 }
 
 function applyStandaloneColorQuality(candidate, strategy) {
-  const requestedColors = candidate.preprocessing?.paletteColors || 16;
-  const quality = inspectColorVectorQuality(candidate.svg, {
+  const sanitized = sanitizeColorCandidate(candidate);
+  const requestedColors = sanitized.preprocessing?.paletteColors || 16;
+  const quality = inspectColorVectorQuality(sanitized.svg, {
     requestedColors,
-    colorCount: candidate.metrics?.colorCount
+    colorCount: sanitized.metrics?.colorCount,
+    edgeRecall: sanitized.metrics?.edgeRecall,
+    edgeAgreement: sanitized.metrics?.edgeAgreement
   });
-  candidate.metrics = { ...(candidate.metrics || {}), ...quality };
-  candidate.rejected = quality.rejected;
-  candidate.rejectedReason = quality.rejectReasons.join(' ') || null;
-  candidate.qualityStrategy = strategy;
-  return candidate;
+  sanitized.metrics = { ...(sanitized.metrics || {}), ...quality };
+  sanitized.rejected = quality.rejected;
+  sanitized.rejectedReason = quality.rejectReasons.join(' ') || null;
+  sanitized.qualityStrategy = strategy;
+  return sanitized;
+}
+
+function colorQualityGate(report, candidate, warnings) {
+  return {
+    ...(report.qualityGate || {}),
+    status: candidate.rejected ? 'reject' : warnings.length ? 'review' : 'pass',
+    worstComponentIoU: null,
+    p10ComponentIoU: null,
+    cornerPreservation: null,
+    componentValidationAvailable: false,
+    selectedEngine: candidate.engine,
+    fidelity: candidate.metrics?.fidelity,
+    edgeAgreement: candidate.metrics?.edgeAgreement,
+    edgeRecall: candidate.metrics?.edgeRecall,
+    detailLossRisk: candidate.metrics?.detailLossRisk,
+    nodeEstimate: candidate.metrics?.nodeEstimate,
+    curveFitScore: candidate.metrics?.curveFitScore,
+    curveCommandCount: candidate.metrics?.curveCommandCount,
+    lineCommandCount: candidate.metrics?.lineCommandCount,
+    paletteScore: candidate.metrics?.paletteScore,
+    paletteValidationAvailable: candidate.metrics?.paletteValidationAvailable,
+    paletteOverflow: candidate.metrics?.paletteOverflow,
+    stairStepRisk: candidate.metrics?.stairStepRisk
+  };
+}
+
+function replaceCandidateMetadata(report, candidate) {
+  const metadata = withoutSvg(candidate);
+  report.candidates = (report.candidates || []).map((item) => item.id === candidate.id
+    ? { ...item, ...metadata }
+    : item);
 }
 
 async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProgress }) {
@@ -92,6 +154,7 @@ async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProg
   });
 
   const report = vtracerResult.vectorReport;
+  report.strategy = requestedStrategy;
   report.candidates = (report.candidates || []).map(markVTracerCandidate);
   const selectedMetadata = selectedCandidateFromReport(report);
   if (!selectedMetadata) throw new Error('VTracer không trả về candidate màu đã chọn.');
@@ -103,7 +166,7 @@ async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProg
   }, requestedStrategy);
 
   if (options.vectorEngine === 'vtracer' || options.autoTrace === false) {
-    report.schemaVersion = Math.max(Number(report.schemaVersion || 0), 8);
+    report.schemaVersion = Math.max(Number(report.schemaVersion || 0), 9);
     report.engineRouter = {
       selectedEngine: 'vtracer',
       actualEngine: 'vtracer',
@@ -115,17 +178,9 @@ async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProg
       routingPolicy: 'forced-vtracer-curve-safe'
     };
     report.selectedScore = vtracerCandidate.score;
-    report.candidates = report.candidates.map((candidate) => candidate.id === vtracerCandidate.id
-      ? { ...candidate, ...withoutSvg(vtracerCandidate) }
-      : candidate);
+    replaceCandidateMetadata(report, vtracerCandidate);
     report.warnings = [...colorWarnings(vtracerCandidate), ...(report.warnings || [])];
-    report.qualityGate = {
-      ...(report.qualityGate || {}),
-      status: report.warnings.length || vtracerCandidate.rejected ? 'review' : 'pass',
-      selectedEngine: 'vtracer',
-      curveFitScore: vtracerCandidate.metrics.curveFitScore,
-      paletteScore: vtracerCandidate.metrics.paletteScore
-    };
+    report.qualityGate = colorQualityGate(report, vtracerCandidate, report.warnings);
     return writeReport(vtracerResult);
   }
 
@@ -143,7 +198,7 @@ async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProg
 
   if (!autotraceCandidate) {
     const reason = autotraceError?.message || 'AutoTrace candidate không khả dụng.';
-    report.schemaVersion = Math.max(Number(report.schemaVersion || 0), 8);
+    report.schemaVersion = Math.max(Number(report.schemaVersion || 0), 9);
     report.engineRouter = {
       selectedEngine: 'vtracer',
       actualEngine: 'vtracer',
@@ -157,9 +212,7 @@ async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProg
       runtime: autotraceError?.runtime || null,
       routingPolicy: 'autotrace-optional-curve-safe-vtracer'
     };
-    report.candidates = report.candidates.map((candidate) => candidate.id === vtracerCandidate.id
-      ? { ...candidate, ...withoutSvg(vtracerCandidate) }
-      : candidate);
+    replaceCandidateMetadata(report, vtracerCandidate);
     report.warnings = [
       `AutoTrace không khả dụng; giữ VTracer ${vtracerStrategy}: ${reason}`,
       ...colorWarnings(vtracerCandidate),
@@ -169,33 +222,25 @@ async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProg
       ...(report.candidateErrors || []),
       { id: 'autotrace', code: autotraceError?.code || 'AUTOTRACE_UNAVAILABLE', error: reason }
     ];
-    report.qualityGate = {
-      ...(report.qualityGate || {}),
-      status: 'review',
-      selectedEngine: 'vtracer',
-      curveFitScore: vtracerCandidate.metrics.curveFitScore,
-      paletteScore: vtracerCandidate.metrics.paletteScore,
-      stairStepRisk: vtracerCandidate.metrics.stairStepRisk
-    };
+    report.qualityGate = colorQualityGate(report, vtracerCandidate, report.warnings);
     return writeReport(vtracerResult);
   }
 
   onProgress?.(84, 'Đang so VTracer và AutoTrace theo fidelity, cạnh, Bézier, palette và node');
+  autotraceCandidate = sanitizeColorCandidate(autotraceCandidate);
   const ranked = rankColorCandidates([
     vtracerCandidate,
     autotraceCandidate
   ], requestedStrategy, engine.scoreCandidates);
-  const selected = ranked[0];
+  const selected = ranked.find((candidate) => !candidate.rejected) || ranked[0];
   await fs.writeFile(outputPath, selected.svg, 'utf8');
 
   const comparisonMetadata = ranked.map(withoutSvg);
   const vtracerCompared = comparisonMetadata.find((candidate) => candidate.engine === 'vtracer');
   const autotraceCompared = comparisonMetadata.find((candidate) => candidate.engine === 'autotrace');
-  report.candidates = report.candidates.map((candidate) => candidate.id === vtracerCompared.id
-    ? { ...candidate, ...vtracerCompared }
-    : candidate);
-  report.candidates.push(autotraceCompared);
-  report.schemaVersion = 8;
+  if (vtracerCompared) replaceCandidateMetadata(report, { ...vtracerCompared, svg: '' });
+  if (autotraceCompared) report.candidates.push(autotraceCompared);
+  report.schemaVersion = 9;
   report.selectedCandidate = selected.id;
   report.selectedScore = selected.score;
   report.engineRouter = {
@@ -206,40 +251,29 @@ async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProg
     requestedStrategy,
     vtracerStrategy,
     paletteColors,
-    routingPolicy: 'quality-ranked-with-curve-and-palette-gate',
+    routingPolicy: 'quality-ranked-with-detail-loss-curve-and-palette-gate',
     runtime: selected.trace?.runtime || null
   };
   report.engineComparison = comparisonMetadata;
   report.warnings = [
     ...colorWarnings(selected),
-    ...(report.warnings || []).filter((warning) => !/Edge recall thấp|SVG vẫn có nhiều node|Curve-fit|biên bậc thang|phát sinh .* màu/.test(warning))
+    ...(report.warnings || []).filter((warning) => !/Edge recall thấp|mất quá nhiều chi tiết|SVG vẫn có nhiều node|Curve-fit|biên bậc thang|phát sinh .* màu|Không đọc được palette/.test(warning))
   ];
-  report.qualityGate = {
-    ...(report.qualityGate || {}),
-    status: report.warnings.length || selected.rejected ? 'review' : 'pass',
-    selectedEngine: selected.engine,
-    fidelity: selected.metrics?.fidelity,
-    edgeAgreement: selected.metrics?.edgeAgreement,
-    edgeRecall: selected.metrics?.edgeRecall,
-    nodeEstimate: selected.metrics?.nodeEstimate,
-    curveFitScore: selected.metrics?.curveFitScore,
-    curveCommandCount: selected.metrics?.curveCommandCount,
-    lineCommandCount: selected.metrics?.lineCommandCount,
-    paletteScore: selected.metrics?.paletteScore,
-    paletteOverflow: selected.metrics?.paletteOverflow,
-    stairStepRisk: selected.metrics?.stairStepRisk
-  };
-  onProgress?.(96, `${selected.label} thắng · curve ${selected.metrics?.curveFitScore ?? '—'} · palette ${selected.metrics?.paletteScore ?? '—'} · ${selected.metrics?.nodeEstimate ?? '—'} node`);
+  report.qualityGate = colorQualityGate(report, selected, report.warnings);
+  onProgress?.(96, `${selected.label} thắng · recall ${selected.metrics?.edgeRecall ?? '—'} · curve ${selected.metrics?.curveFitScore ?? '—'} · palette ${selected.metrics?.paletteScore ?? '—'} · ${selected.metrics?.nodeEstimate ?? '—'} node`);
   return writeReport(vtracerResult);
 }
 
 module.exports = {
   applyStandaloneColorQuality,
+  colorQualityGate,
   colorWarnings,
   markVTracerCandidate,
   routedPaletteColors,
   routedVTracerStrategy,
   runColorMultiEngine,
+  sanitizeColorCandidate,
   selectedCandidateFromReport,
+  unavailableColorComponentValidation,
   withoutSvg
 };

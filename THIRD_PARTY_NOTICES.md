@@ -18,7 +18,7 @@ product.
 
 ## AutoTrace color candidate runtime
 
-V2.9.2 can invoke the upstream AutoTrace command-line program as an external
+V2.9.4 invokes the upstream AutoTrace command-line program as an external
 candidate engine for flat-color artwork. AutoTrace is not reimplemented in this
 repository.
 
@@ -26,11 +26,17 @@ repository.
 - AutoTrace program: GPL-2.0-or-later
 - `libautotrace`: LGPL-2.1-or-later
 
-Windows x64 builds may include an official upstream AutoTrace executable and its
-runtime files under `autotrace-runtime`. macOS builds detect a verified Homebrew,
-MacPorts or other system AutoTrace installation; when no compatible executable
-is available, the app keeps the VTracer result and records the fallback reason in
-`vector-report.json`.
+Windows x64 builds include the official upstream AutoTrace executable and its
+runtime DLL files under `autotrace-runtime`. macOS Apple Silicon and Intel builds
+copy the Homebrew bottle executable during CI, recursively collect its non-system
+Mach-O dynamic libraries, rewrite their install names to `@loader_path`, and
+bundle the resulting relocatable runtime under `autotrace-runtime/bin` and
+`autotrace-runtime/lib`. End users do not need Homebrew, Terminal commands, or a
+separate AutoTrace installation.
+
+The build verifies the copied runtime with Homebrew removed from `PATH`, then
+runs a second trace from the packaged Electron application resources before the
+installer artifact is accepted.
 
 The current application is used personally and internally. Reassess GPL and
 runtime-distribution obligations before providing installers to external users.

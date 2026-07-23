@@ -25,7 +25,7 @@
     const notice = settings.querySelector('.notice');
     if (notice) {
       notice.classList.add('smart-vector-notice');
-      notice.innerHTML = '<b>Smart Vector Router</b><span class="smart-vector-badge">CURVE-SAFE V2.9.3</span><br>Logo đơn sắc ưu tiên Potrace; artwork màu phẳng so sánh VTracer spline và AutoTrace. Candidate bậc thang hoặc nổ palette sẽ bị loại.';
+      notice.innerHTML = '<b>Smart Vector Router</b><span class="smart-vector-badge">BUNDLED RUNTIME V2.9.4</span><br>Logo đơn sắc ưu tiên Potrace; artwork màu phẳng so sánh VTracer spline và AutoTrace. AutoTrace đã nằm trong bộ cài, không cần cài thêm bằng Terminal.';
     }
 
     const colorMode = get('colorMode');
@@ -78,7 +78,7 @@
 
     const hint = document.createElement('p');
     hint.className = 'smart-vector-hint';
-    hint.textContent = 'Input Quality Gate chạy trước router. V2.9.3 chấm fidelity, edge, Bézier, line density, palette và node; report ghi engine thắng cùng lý do reject/fallback.';
+    hint.textContent = 'Input Quality Gate chạy trước router. V2.9.4 chấm fidelity, edge, Bézier, line density, palette và node; report ghi engine thắng, runtime bundled và lý do reject/fallback.';
     reconstruction.insertAdjacentElement('afterend', hint);
 
     const turd = get('turdSize');
@@ -171,7 +171,8 @@
       ? `Fallback: ${fallbackSource} → ${engineName(router.selectedEngine || 'vtracer')} · ${router.fallbackReason}`
       : null;
     const runtimeVersion = runtime.packageVersion || runtime.version;
-    const engineLine = `Engine thực tế: ${engineName(actualEngine)}${runtime.target ? ` · ${runtime.target}` : ''}${runtimeVersion ? ` · v${runtimeVersion}` : ''}`;
+    const runtimeSource = runtime.source === 'packaged-resources' ? ' · bundled' : runtime.source ? ` · ${runtime.source}` : '';
+    const engineLine = `Engine thực tế: ${engineName(actualEngine)}${runtime.target ? ` · ${runtime.target}` : ''}${runtimeVersion ? ` · v${runtimeVersion}` : ''}${runtimeSource}`;
     const comparisonLine = Array.isArray(report.engineComparison)
       ? `So engine: ${report.engineComparison.map(candidateSummary).join(' | ')}`
       : attempted ? `Đã thử: ${attempted}` : null;
@@ -272,10 +273,10 @@
   function syncVectorBrand(event) {
     const button = event.target.closest('.nav-item');
     if (!button || button.dataset.tool !== 'vector-logo') return;
-    document.title = 'Print Upscale Studio V2.9.3 Curve-Safe Vector Router';
+    document.title = 'Print Upscale Studio V2.9.4 Bundled AutoTrace Runtime';
     const brandVersion = document.querySelector('.brand span');
-    if (brandVersion) brandVersion.textContent = 'Studio V2.9.3 · Curve-Safe Vector';
-    get('toolDescription').textContent = 'Smart Router: Potrace cho đơn sắc; VTracer spline và AutoTrace cạnh tranh bằng fidelity, curve-fit và palette quality.';
+    if (brandVersion) brandVersion.textContent = 'Studio V2.9.4 · Bundled AutoTrace';
+    get('toolDescription').textContent = 'Smart Router: Potrace cho đơn sắc; VTracer spline và AutoTrace bundled cạnh tranh bằng fidelity, curve-fit và palette quality.';
   }
 
   installStyles();
