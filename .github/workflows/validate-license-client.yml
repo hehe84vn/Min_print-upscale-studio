@@ -1,0 +1,41 @@
+name: Validate Electron License Client
+
+on:
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'src/main/bootstrap.js'
+      - 'src/main/licenseConfig.js'
+      - 'src/main/preload.js'
+      - 'src/main/services/licenseService.js'
+      - 'src/main/services/secureSecretsService.js'
+      - 'src/renderer/license-ui.js'
+      - 'src/renderer/zoom.js'
+      - 'supabase/functions/license-gateway/**'
+      - 'scripts/license-client-smoke.mjs'
+      - '.github/workflows/validate-license-client.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-license-client:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check JavaScript syntax
+        run: npm run lint
+
+      - name: Run license regression smoke test
+        run: node scripts/license-client-smoke.mjs
