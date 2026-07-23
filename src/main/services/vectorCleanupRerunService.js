@@ -5,7 +5,8 @@ const path = require('node:path');
 const { cleanupVectorSvg } = require('./vectorCleanupService');
 const { inspectSvgComplexity } = require('./vectorLogoEngine');
 
-const CLEANUP_PROFILES = new Set(['precise', 'balanced', 'smooth']);
+const CLEANUP_PROFILES = new Set(['auto', 'precise', 'balanced', 'smooth']);
+const PROFILE_ORDER = ['precise', 'balanced', 'smooth'];
 
 function masterPathForOutput(outputPath) {
   const parsed = path.parse(outputPath);
@@ -22,25 +23,62 @@ async function saveVectorMaster(outputPath, svg) {
   return masterPath;
 }
 
-async function rerunVectorCleanup({ inputPath, outputPath, options = {}, onProgress }) {
-  if (!inputPath || !outputPath) throw new Error('Thiếu Master SVG hoặc đường dẫn file đầu ra.');
-  const profile = normalizeProfile(options.profile);
-  onProgress?.(12, `Đang đọc Master SVG · ${profile}`);
-  const masterSvg = await fs.readFile(inputPath, 'utf8');
-  const before = inspectSvgComplexity(masterSvg);
+function evaluateCandidate(profile, before, cleaned, after) {
+  const stats = cleaned.stats;
+  const pathLoss = Math.max(0, before.pathCount - after.pathCount);
+  const pathLossRatio = before.pathCount > 0 ? pathLoss / before.pathCount : 0;
+  const deviationRatio = stats.bezierErrorTolerance > 0
+    ? stats.maximumBezierDeviation / stats.bezierErrorTolerance
+    : 0;
+  const nodeReduction = before.nodeEstimate > 0
+    ? ((before.nodeEstimate - after.nodeEstimate) / before.nodeEstimate) * 100
+    : 0;
 
-  onProgress?.(48, 'Đang tối ưu path và Bézier mà không trace lại');
-  const cleaned = cleanupVectorSvg(masterSvg, {
-    profile,
-    pathPrecision: Number(options.pathPrecision) || 3
-  });
-  const after = inspectSvgComplexity(cleaned.svg);
-  await fs.writeFile(outputPath, cleaned.svg, 'utf8');
+  const rejectionReasons = [];
+  if (stats.parseErrors > 0) rejectionReasons.push(`${stats.parseErrors} path parse lỗi`);
+  if (stats.openSubpathsRemaining > 0) rejectionReasons.push(`${stats.openSubpathsRemaining} subpath hở`);
+  if (pathLoss > Math.max(2, Math.ceil(before.pathCount * 0.08))) rejectionReasons.push(`mất ${pathLoss} path`);
+  if (deviationRatio > 0.92) rejectionReasons.push('sai lệch Bézier sát tolerance');
+  if (after.nodeEstimate <= 0 || after.pathCount <= 0) rejectionReasons.push('kết quả rỗng');
 
-  const report = {
+  const safetyScore = Math.max(0, 100
+    - Math.min(38, deviationRatio * 32)
+    - Math.min(32, pathLossRatio * 220)
+    - Math.min(25, stats.openSubpathsRemaining * 5)
+    - Math.min(35, stats.parseErrors * 12));
+  const cleanupScore = Math.max(0, Math.min(100, 42 + nodeReduction * 1.45
+    + Math.min(12, stats.collinearNodesRemoved * 0.15)
+    + Math.min(8, stats.cubicPairsMerged * 0.35)));
+  const profileBias = profile === 'balanced' ? 2.5 : profile === 'precise' ? 1 : 0;
+  const score = Number((safetyScore * 0.74 + cleanupScore * 0.26 + profileBias).toFixed(2));
+
+  return {
     profile,
-    masterPath: inputPath,
-    outputPath,
+    accepted: rejectionReasons.length === 0,
+    rejectionReasons,
+    score,
+    safetyScore: Number(safetyScore.toFixed(2)),
+    cleanupScore: Number(cleanupScore.toFixed(2)),
+    nodeReduction: Number(nodeReduction.toFixed(2)),
+    nodesAfter: after.nodeEstimate,
+    pathCountAfter: after.pathCount,
+    pathLoss,
+    deviationRatio: Number(deviationRatio.toFixed(4)),
+    maximumBezierDeviation: stats.maximumBezierDeviation,
+    stats,
+    svg: cleaned.svg
+  };
+}
+
+function chooseAutomaticCandidate(candidates) {
+  const accepted = candidates.filter((candidate) => candidate.accepted);
+  if (accepted.length) return [...accepted].sort((left, right) => right.score - left.score)[0];
+  return candidates.find((candidate) => candidate.profile === 'precise') || candidates[0];
+}
+
+function cleanupReport(profile, before, after, cleaned, extra = {}) {
+  return {
+    profile,
     nodesBefore: before.nodeEstimate,
     nodesAfter: after.nodeEstimate,
     nodeReduction: before.nodeEstimate > 0
@@ -50,15 +88,65 @@ async function rerunVectorCleanup({ inputPath, outputPath, options = {}, onProgr
     pathCountAfter: after.pathCount,
     svgBytesBefore: before.svgBytes,
     svgBytesAfter: after.svgBytes,
-    ...cleaned.stats
+    ...cleaned.stats,
+    ...extra
   };
+}
 
-  onProgress?.(100, `Cleanup ${profile} hoàn tất · ${before.nodeEstimate} → ${after.nodeEstimate} node`);
-  return { outputPath, masterPath: inputPath, vectorCleanup: report };
+async function rerunVectorCleanup({ inputPath, outputPath, options = {}, onProgress }) {
+  if (!inputPath || !outputPath) throw new Error('Thiếu Master SVG hoặc đường dẫn file đầu ra.');
+  const requestedProfile = normalizeProfile(options.profile);
+  onProgress?.(12, `Đang đọc Master SVG · ${requestedProfile}`);
+  const masterSvg = await fs.readFile(inputPath, 'utf8');
+  const before = inspectSvgComplexity(masterSvg);
+  const pathPrecision = Number(options.pathPrecision) || 3;
+
+  let selectedProfile = requestedProfile;
+  let cleaned;
+  let after;
+  let autoSelection = null;
+
+  if (requestedProfile === 'auto') {
+    onProgress?.(34, 'Đang thử Precise, Balanced và Smooth trên cùng Master SVG');
+    const candidates = PROFILE_ORDER.map((profile) => {
+      const candidateCleaned = cleanupVectorSvg(masterSvg, { profile, pathPrecision });
+      const candidateAfter = inspectSvgComplexity(candidateCleaned.svg);
+      return evaluateCandidate(profile, before, candidateCleaned, candidateAfter);
+    });
+    const selected = chooseAutomaticCandidate(candidates);
+    selectedProfile = selected.profile;
+    cleaned = { svg: selected.svg, stats: selected.stats };
+    after = inspectSvgComplexity(cleaned.svg);
+    autoSelection = {
+      requestedProfile: 'auto',
+      selectedProfile,
+      fallbackToPrecise: !selected.accepted,
+      candidates: candidates.map(({ svg, stats, ...candidate }) => candidate)
+    };
+  } else {
+    onProgress?.(48, 'Đang tối ưu path và Bézier mà không trace lại');
+    cleaned = cleanupVectorSvg(masterSvg, { profile: selectedProfile, pathPrecision });
+    after = inspectSvgComplexity(cleaned.svg);
+  }
+
+  await fs.writeFile(outputPath, cleaned.svg, 'utf8');
+  const report = cleanupReport(selectedProfile, before, after, cleaned, autoSelection ? { autoSelection } : {});
+
+  onProgress?.(100, `Cleanup ${selectedProfile} hoàn tất · ${before.nodeEstimate} → ${after.nodeEstimate} node`);
+  return {
+    outputPath,
+    masterPath: inputPath,
+    requestedProfile,
+    selectedProfile,
+    vectorCleanup: report
+  };
 }
 
 module.exports = {
   CLEANUP_PROFILES,
+  PROFILE_ORDER,
+  chooseAutomaticCandidate,
+  evaluateCandidate,
   masterPathForOutput,
   normalizeProfile,
   rerunVectorCleanup,
