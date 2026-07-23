@@ -130,6 +130,9 @@
     pending = value;
     get('licenseLoginBtn').disabled = value;
     get('licenseRetryBtn').disabled = value;
+    get('licenseValidateBtn').disabled = value || currentStatus?.processingAllowed !== true;
+    get('licenseLogoutBtn').disabled = value || !currentStatus?.email;
+    get('licenseDeactivateBtn').disabled = value || !currentStatus?.email;
     if (message) {
       get('licenseGateMessage').textContent = message;
       get('licenseGateMessage').classList.remove('error');
