@@ -18,6 +18,8 @@ concurrency:
 env:
   UPSCAYL_RELEASE_TAG: v2.15.0
   AUTOTRACE_VERSION: 0.31.10
+  AUTOTRACE_UPSTREAM_VERSION: 0.40.0
+  AUTOTRACE_UPSTREAM_COMMIT: 74c796282474f33553265abbef4fc340b18c0593
   HOMEBREW_NO_AUTO_UPDATE: 1
 
 jobs:
@@ -33,13 +35,48 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Verify Windows runtime entry point
-        run: node -e "const p=require('./package.json'); if(p.scripts['autotrace:prepare:win']!=='node scripts/prepare-autotrace-windows-runtime.mjs --strict') throw new Error('Windows AutoTrace entry point is stale');"
+      - name: Verify source-built Windows runtime route
+        run: |
+          bash -n scripts/build-autotrace-windows-runtime.sh
+          node -e "const p=require('./package.json'); if(p.scripts['dist:win'].includes('prepare-autotrace-windows-runtime') || p.scripts['dist:win'].includes('autotrace:prepare:win')) throw new Error('dist:win must consume the verified source-built runtime artifact');"
       - name: Run V2.9.4 syntax and fallback checks
         run: npm run check
 
-  build-windows:
+  prepare-autotrace-windows-runtime:
     needs: validate
+    runs-on: ubuntu-latest
+    container: fedora:43
+    timeout-minutes: 45
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Install official MinGW cross-build dependencies
+        run: |
+          sudo dnf update -y
+          sudo dnf install -y autoconf automake file findutils gettext-devel git glib2-devel intltool libtool make \
+            mingw64-binutils mingw64-filesystem mingw64-glib2 mingw64-libpng mingw64-gcc \
+            pkgconf-pkg-config which
+      - name: Cross-compile pinned upstream AutoTrace for Windows x64
+        run: bash scripts/build-autotrace-windows-runtime.sh
+      - name: Verify runtime provenance and required GCC DLLs
+        run: |
+          test -f vendor/autotrace/win32-x64/bin/autotrace.exe
+          test -f vendor/autotrace/win32-x64/bin/libgcc_s_seh-1.dll
+          test -f vendor/autotrace/win32-x64/bin/libwinpthread-1.dll
+          grep -q 'upstream-fedora-mingw64-cross-compile' vendor/autotrace/win32-x64/runtime.json
+          grep -q "$AUTOTRACE_UPSTREAM_COMMIT" vendor/autotrace/win32-x64/runtime.json
+      - name: Upload source-built AutoTrace Windows x64 runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: autotrace-source-built-windows-x64
+          path: vendor/autotrace/win32-x64
+          if-no-files-found: error
+          retention-days: 14
+
+  build-windows:
+    needs:
+      - validate
+      - prepare-autotrace-windows-runtime
     runs-on: windows-latest
     timeout-minutes: 120
     steps:
@@ -51,10 +88,19 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Bundle official AutoTrace Windows x64 runtime
-        run: npm run autotrace:prepare:win
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download source-built AutoTrace Windows x64 runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: autotrace-source-built-windows-x64
+          path: vendor/autotrace/win32-x64
+      - name: Verify source-built runtime manifest
+        shell: pwsh
+        run: |
+          $manifest = Get-Content vendor/autotrace/win32-x64/runtime.json -Raw | ConvertFrom-Json
+          if ($manifest.buildMethod -ne 'upstream-fedora-mingw64-cross-compile') { throw 'Unexpected Windows AutoTrace build method' }
+          if ($manifest.sourceCommit -ne $env:AUTOTRACE_UPSTREAM_COMMIT) { throw 'Unexpected Windows AutoTrace source commit' }
+          if (-not (Test-Path vendor/autotrace/win32-x64/bin/libgcc_s_seh-1.dll)) { throw 'Missing libgcc_s_seh-1.dll' }
+          if (-not (Test-Path vendor/autotrace/win32-x64/bin/libwinpthread-1.dll)) { throw 'Missing libwinpthread-1.dll' }
       - name: Verify bundled AutoTrace without a separate installation
         run: npm run autotrace:smoke-runtime
       - name: Upload Windows AutoTrace runtime diagnostics
