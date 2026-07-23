@@ -1,0 +1,9 @@
+{
+  "minimumShapeIoU": 0.96,
+  "maximumChangedPixelRatio": 0.03,
+  "maximumChangedForegroundRatio": 0.04,
+  "maximumMeanChannelDelta": 10,
+  "maximumNodeRatio": 1.35,
+  "maximumDurationMs": 30000,
+  "renderSize": 1024
+}
