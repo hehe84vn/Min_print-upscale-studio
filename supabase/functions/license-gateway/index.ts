@@ -11,12 +11,16 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
+const DEVICE_PROOF_WINDOW_MS = 5 * 60 * 1000
+
 type LicenseAction = 'activate' | 'validate' | 'deactivate'
 
 type RequestBody = {
   action?: LicenseAction
   installationHash?: string
   devicePublicKey?: string
+  deviceProof?: string
+  proofTimestamp?: string
   platform?: 'darwin' | 'win32' | 'linux'
   architecture?: string
   deviceName?: string
@@ -39,6 +43,58 @@ function base64Url(bytes: Uint8Array) {
 function decodeBase64(value: string) {
   const binary = atob(value.replace(/\s+/g, ''))
   return Uint8Array.from(binary, (char) => char.charCodeAt(0))
+}
+
+function decodeBase64Url(value: string) {
+  const normalized = value.replaceAll('-', '+').replaceAll('_', '/')
+  const padding = '='.repeat((4 - (normalized.length % 4)) % 4)
+  return decodeBase64(`${normalized}${padding}`)
+}
+
+function pemToDer(pem: string) {
+  const base64 = pem
+    .replace(/-----BEGIN PUBLIC KEY-----/g, '')
+    .replace(/-----END PUBLIC KEY-----/g, '')
+    .replace(/\s+/g, '')
+  return decodeBase64(base64)
+}
+
+async function verifyDeviceProof({
+  publicKeyPem,
+  action,
+  installationHash,
+  proofTimestamp,
+  deviceProof,
+}: {
+  publicKeyPem: string
+  action: LicenseAction
+  installationHash: string
+  proofTimestamp?: string
+  deviceProof?: string
+}) {
+  const timestamp = Number(proofTimestamp)
+  if (!Number.isFinite(timestamp) || Math.abs(Date.now() - timestamp) > DEVICE_PROOF_WINDOW_MS) return false
+  if (!deviceProof || deviceProof.length > 512) return false
+  if (!publicKeyPem.includes('BEGIN PUBLIC KEY') || publicKeyPem.length > 4096) return false
+
+  try {
+    const key = await crypto.subtle.importKey(
+      'spki',
+      pemToDer(publicKeyPem),
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      false,
+      ['verify'],
+    )
+    const signedPayload = new TextEncoder().encode(`${action}\n${installationHash}\n${proofTimestamp}`)
+    return await crypto.subtle.verify(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      key,
+      decodeBase64Url(deviceProof),
+      signedPayload,
+    )
+  } catch {
+    return false
+  }
 }
 
 async function signEntitlement(payload: Record<string, unknown>) {
@@ -115,9 +171,19 @@ Deno.serve(async (request) => {
     .maybeSingle()
 
   if (deviceError) return json(500, { error: 'device_lookup_failed' })
+  if (device?.revoked_at) return json(403, { error: 'device_revoked' })
 
   if (action === 'deactivate') {
-    if (device && !device.revoked_at) {
+    if (device) {
+      const validProof = await verifyDeviceProof({
+        publicKeyPem: device.device_public_key,
+        action,
+        installationHash,
+        proofTimestamp: body.proofTimestamp,
+        deviceProof: body.deviceProof,
+      })
+      if (!validProof) return json(401, { error: 'invalid_device_proof' })
+
       const { error } = await admin
         .from('license_devices')
         .update({ revoked_at: now.toISOString(), revoke_reason: 'user_deactivated' })
@@ -133,11 +199,18 @@ Deno.serve(async (request) => {
     return json(200, { ok: true })
   }
 
-  if (device?.revoked_at) return json(403, { error: 'device_revoked' })
-
   if (!device) {
     if (action !== 'activate') return json(403, { error: 'device_not_activated' })
     if (!body.devicePublicKey || !body.platform) return json(400, { error: 'missing_device_registration' })
+
+    const validProof = await verifyDeviceProof({
+      publicKeyPem: body.devicePublicKey,
+      action,
+      installationHash,
+      proofTimestamp: body.proofTimestamp,
+      deviceProof: body.deviceProof,
+    })
+    if (!validProof) return json(401, { error: 'invalid_device_proof' })
 
     const { count, error: countError } = await admin
       .from('license_devices')
@@ -172,6 +245,15 @@ Deno.serve(async (request) => {
       details: { platform: body.platform, architecture: body.architecture, appVersion: body.appVersion },
     })
   } else {
+    const validProof = await verifyDeviceProof({
+      publicKeyPem: device.device_public_key,
+      action,
+      installationHash,
+      proofTimestamp: body.proofTimestamp,
+      deviceProof: body.deviceProof,
+    })
+    if (!validProof) return json(401, { error: 'invalid_device_proof' })
+
     const { data: updated, error: updateError } = await admin
       .from('license_devices')
       .update({
