@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const engine = require('./vectorLogoEngine');
 const { buildAutoTraceColorCandidate } = require('./autotraceSplineCandidateService');
 const { inspectColorVectorQuality, rankColorCandidates } = require('./colorVectorQualityService');
+const { rankCandidatesByConsensus } = require('./vectorConsensusRankingService');
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -57,8 +58,6 @@ function selectedCandidateFromReport(report) {
 }
 
 function routedVTracerStrategy(strategy = 'smart') {
-  // Smart must exclude the polygon-only compact preset from the VTracer preselection.
-  // The detail route still compares detail and balanced spline candidates internally.
   return strategy === 'smart' ? 'detail' : strategy;
 }
 
@@ -79,6 +78,7 @@ function colorWarnings(candidate) {
   if (candidate.metrics?.paletteOverflow) warnings.push(`Candidate phát sinh ${candidate.metrics.colorCount} màu, vượt ngân sách ${candidate.metrics.requestedColors} màu phẳng.`);
   if (candidate.metrics?.paletteValidationAvailable === false) warnings.push('Không đọc được palette của SVG; candidate không đủ điều kiện tự động chọn.');
   if ((candidate.metrics?.curveFitScore ?? 100) < 55) warnings.push('Curve-fit thấp; cần kiểm tra vòng cung và chữ cong ở mức zoom lớn.');
+  if (candidate.consensus?.available && candidate.consensus.agreementScore < 35) warnings.push('Candidate lệch mạnh khỏi đồng thuận giữa các engine; cần kiểm tra preview trước khi dùng.');
   return warnings;
 }
 
@@ -123,7 +123,9 @@ function colorQualityGate(report, candidate, warnings) {
     paletteScore: candidate.metrics?.paletteScore,
     paletteValidationAvailable: candidate.metrics?.paletteValidationAvailable,
     paletteOverflow: candidate.metrics?.paletteOverflow,
-    stairStepRisk: candidate.metrics?.stairStepRisk
+    stairStepRisk: candidate.metrics?.stairStepRisk,
+    consensusAgreement: candidate.consensus?.agreementScore ?? null,
+    consensusScore: candidate.consensusScore ?? null
   };
 }
 
@@ -166,7 +168,7 @@ async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProg
   }, requestedStrategy);
 
   if (options.vectorEngine === 'vtracer' || options.autoTrace === false) {
-    report.schemaVersion = Math.max(Number(report.schemaVersion || 0), 9);
+    report.schemaVersion = Math.max(Number(report.schemaVersion || 0), 10);
     report.engineRouter = {
       selectedEngine: 'vtracer',
       actualEngine: 'vtracer',
@@ -198,7 +200,7 @@ async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProg
 
   if (!autotraceCandidate) {
     const reason = autotraceError?.message || 'AutoTrace candidate không khả dụng.';
-    report.schemaVersion = Math.max(Number(report.schemaVersion || 0), 9);
+    report.schemaVersion = Math.max(Number(report.schemaVersion || 0), 10);
     report.engineRouter = {
       selectedEngine: 'vtracer',
       actualEngine: 'vtracer',
@@ -226,12 +228,16 @@ async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProg
     return writeReport(vtracerResult);
   }
 
-  onProgress?.(84, 'Đang so VTracer và AutoTrace theo fidelity, cạnh, Bézier, palette và node');
+  onProgress?.(82, 'Đang xếp hạng fidelity, cạnh, Bézier, palette và node');
   autotraceCandidate = sanitizeColorCandidate(autotraceCandidate);
-  const ranked = rankColorCandidates([
+  const qualityRanked = rankColorCandidates([
     vtracerCandidate,
     autotraceCandidate
   ], requestedStrategy, engine.scoreCandidates);
+  onProgress?.(88, 'Đang đo đồng thuận hình ảnh giữa các engine');
+  const ranked = await rankCandidatesByConsensus(qualityRanked, {
+    renderSize: Number(options.consensusRenderSize) || 640
+  });
   const selected = ranked.find((candidate) => !candidate.rejected) || ranked[0];
   await fs.writeFile(outputPath, selected.svg, 'utf8');
 
@@ -240,9 +246,9 @@ async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProg
   const autotraceCompared = comparisonMetadata.find((candidate) => candidate.engine === 'autotrace');
   if (vtracerCompared) replaceCandidateMetadata(report, { ...vtracerCompared, svg: '' });
   if (autotraceCompared) report.candidates.push(autotraceCompared);
-  report.schemaVersion = 9;
+  report.schemaVersion = 10;
   report.selectedCandidate = selected.id;
-  report.selectedScore = selected.score;
+  report.selectedScore = selected.consensusScore ?? selected.score;
   report.engineRouter = {
     selectedEngine: selected.engine,
     actualEngine: selected.trace?.engine || selected.engine,
@@ -251,16 +257,26 @@ async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProg
     requestedStrategy,
     vtracerStrategy,
     paletteColors,
-    routingPolicy: 'quality-ranked-with-detail-loss-curve-and-palette-gate',
+    routingPolicy: 'quality-gated-multi-engine-consensus-ranking',
+    consensusAgreement: selected.consensus?.agreementScore ?? null,
     runtime: selected.trace?.runtime || null
   };
   report.engineComparison = comparisonMetadata;
+  report.consensusRanking = comparisonMetadata.map((candidate) => ({
+    id: candidate.id,
+    engine: candidate.engine,
+    rejected: candidate.rejected,
+    baseScore: candidate.score,
+    consensusScore: candidate.consensusScore,
+    agreementScore: candidate.consensus?.agreementScore,
+    peers: candidate.consensus?.peers || []
+  }));
   report.warnings = [
     ...colorWarnings(selected),
-    ...(report.warnings || []).filter((warning) => !/Edge recall thấp|mất quá nhiều chi tiết|SVG vẫn có nhiều node|Curve-fit|biên bậc thang|phát sinh .* màu|Không đọc được palette/.test(warning))
+    ...(report.warnings || []).filter((warning) => !/Edge recall thấp|mất quá nhiều chi tiết|SVG vẫn có nhiều node|Curve-fit|biên bậc thang|phát sinh .* màu|Không đọc được palette|đồng thuận giữa các engine/.test(warning))
   ];
   report.qualityGate = colorQualityGate(report, selected, report.warnings);
-  onProgress?.(96, `${selected.label} thắng · recall ${selected.metrics?.edgeRecall ?? '—'} · curve ${selected.metrics?.curveFitScore ?? '—'} · palette ${selected.metrics?.paletteScore ?? '—'} · ${selected.metrics?.nodeEstimate ?? '—'} node`);
+  onProgress?.(96, `${selected.label} thắng · consensus ${selected.consensus?.agreementScore ?? '—'} · recall ${selected.metrics?.edgeRecall ?? '—'} · curve ${selected.metrics?.curveFitScore ?? '—'} · ${selected.metrics?.nodeEstimate ?? '—'} node`);
   return writeReport(vtracerResult);
 }
 
