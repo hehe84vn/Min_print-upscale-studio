@@ -26,6 +26,23 @@ function requireLicenseService() {
   return licenseService;
 }
 
+function makeInitializationIdempotent(service) {
+  const initializeOnce = service.initialize.bind(service);
+  let initialized = false;
+  let pending = null;
+  service.initialize = async ({ force = false } = {}) => {
+    if (initialized && !force) return service.getCachedStatus();
+    if (pending) return pending;
+    pending = initializeOnce()
+      .then((status) => {
+        initialized = true;
+        return status;
+      })
+      .finally(() => { pending = null; });
+    return pending;
+  };
+}
+
 function registerLicenseIpc() {
   originalHandle('license:status', async () => requireLicenseService().initialize());
 
@@ -69,6 +86,7 @@ app.whenReady().then(async () => {
     config: licenseConfig,
     appVersion: app.getVersion()
   });
+  makeInitializationIdempotent(licenseService);
   registerLicenseIpc();
 
   try {
