@@ -1,0 +1,95 @@
+name: Publish Print Upscale Studio V2.9.4 Hotfix 1
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/release/v2.9.4-hotfix.1
+      - .github/workflows/publish-v2.9.4-hotfix.1.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v2.9.4-hotfix.1
+      TARGET_SHA: 4915fa5cd6ca90436de45e45b4bd64d9df9d5f0f
+      SOURCE_RUN_ID: '29981468807'
+    steps:
+      - name: Download verified installer artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets/macos-arm64 release-assets/macos-x64 release-assets/windows-x64
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name print-upscale-studio-v2.9.4-macos-arm64 --dir release-assets/macos-arm64
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name print-upscale-studio-v2.9.4-macos-x64 --dir release-assets/macos-x64
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name print-upscale-studio-v2.9.4-windows-x64 --dir release-assets/windows-x64
+          find release-assets -type f -maxdepth 4 -print
+
+      - name: Verify release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          arm64_count=$(find release-assets/macos-arm64 -type f -name '*.dmg' | wc -l | tr -d ' ')
+          x64_count=$(find release-assets/macos-x64 -type f -name '*.dmg' | wc -l | tr -d ' ')
+          windows_count=$(find release-assets/windows-x64 -type f -name '*.exe' | wc -l | tr -d ' ')
+          test "$arm64_count" -ge 1
+          test "$x64_count" -ge 1
+          test "$windows_count" -ge 1
+
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > release-notes.md <<'EOF'
+          ## Print Upscale Studio V2.9.4 Hotfix 1
+
+          Bản phát hành này sửa lỗi ứng dụng mở được nhưng giao diện bị đứng trên macOS sau khi quy hoạch lại sidebar.
+
+          ### Đã sửa
+
+          - Loại bỏ vòng lặp tự kích hoạt trong renderer navigation.
+          - Giữ nguyên cấu trúc menu mới: Cloud Enhance, Model Studio, Safe Restore và Quick Vector.
+          - Không thay đổi logic upscale, AutoTrace, Vector, AI Cloud, màu sắc hoặc Smart Production.
+          - Bổ sung regression test để ngăn lỗi treo giao diện tái xuất hiện.
+
+          ### Bộ cài
+
+          - macOS Apple Silicon: M1, M2, M3, M4.
+          - macOS Intel x64.
+          - Windows x64.
+
+          ### Kiểm chứng
+
+          Các bộ cài được lấy trực tiếp từ GitHub Actions run `29981468807`, đã vượt syntax/smoke tests, vector runtime checks và packaged build checks trên cả ba nền tảng.
+
+          ### macOS chưa ký/notarize
+
+          Sau khi kéo app vào Applications, có thể cần chạy:
+
+          ```bash
+          sudo xattr -rd com.apple.quarantine "/Applications/Print Upscale Studio.app"
+          ```
+          EOF
+
+      - name: Recreate GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+          fi
+
+          mapfile -t assets < <(find release-assets -type f \( -name '*.dmg' -o -name '*.exe' \) | sort)
+          test "${#assets[@]}" -ge 3
+
+          gh release create "$RELEASE_TAG" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$TARGET_SHA" \
+            --title "Print Upscale Studio V2.9.4 Hotfix 1" \
+            --notes-file release-notes.md \
+            --latest
