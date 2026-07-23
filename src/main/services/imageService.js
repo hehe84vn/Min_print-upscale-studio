@@ -5,6 +5,7 @@ const sharp = require('sharp');
 const { runNcnnUpscale } = require('./engineService');
 const { enhanceImage } = require('./aiProviderService');
 const { vectorizeLogo } = require('./vectorLogoService');
+const { rerunVectorCleanup } = require('./vectorCleanupRerunService');
 
 const MAX_SCALE = 8;
 
@@ -211,6 +212,7 @@ async function processImage(payload) {
   if (payload.operation === 'restore') return restoreSafe(payload);
   if (payload.operation === 'text-print') return textPrintSafe(payload);
   if (payload.operation === 'vector-logo') return vectorizeLogo(payload);
+  if (payload.operation === 'vector-cleanup') return rerunVectorCleanup(payload);
   throw new Error(`Unknown operation: ${payload.operation}`);
 }
 
