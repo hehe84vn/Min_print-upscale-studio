@@ -2,21 +2,19 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const sharp = require('sharp');
 const { inspectColorVectorQuality } = require('./colorVectorQualityService');
-const { validateSvgCleanup } = require('./vectorVisualValidationService');
+const { validateSvgVisual } = require('./vectorVisualValidationService');
 
 const DEFAULT_THRESHOLDS = {
-  minimumShapeIoU: 96,
-  maximumForegroundChangedRatio: 4,
-  maximumMeanColorDelta: 10,
+  minimumShapeIoU: 0.96,
+  maximumChangedForegroundRatio: 0.04,
+  maximumMeanChannelDelta: 10,
   maximumNodeRatio: 1.35,
   maximumDurationMs: 30000
 };
 
 function countNodes(svg) {
-  const commands = String(svg).match(/[MLHVCSQTAZmlhvcsqtaz]/g) || [];
-  return commands.length;
+  return (String(svg).match(/[MLHVCSQTAZmlhvcsqtaz]/g) || []).length;
 }
 
 function csvEscape(value) {
@@ -30,23 +28,22 @@ async function readJson(filePath, fallback = null) {
 
 async function inspectSvg(svgPath, goldenPath, thresholds = {}) {
   const started = Date.now();
-  const [svg, goldenSvg] = await Promise.all([
-    fs.readFile(svgPath, 'utf8'),
-    fs.readFile(goldenPath, 'utf8')
-  ]);
-  const visual = await validateSvgCleanup(goldenSvg, svg, {
-    minimumShapeIoU: thresholds.minimumShapeIoU ?? DEFAULT_THRESHOLDS.minimumShapeIoU,
-    maximumForegroundChangedRatio: thresholds.maximumForegroundChangedRatio ?? DEFAULT_THRESHOLDS.maximumForegroundChangedRatio,
-    maximumMeanColorDelta: thresholds.maximumMeanColorDelta ?? DEFAULT_THRESHOLDS.maximumMeanColorDelta
+  const [svg, goldenSvg] = await Promise.all([fs.readFile(svgPath, 'utf8'), fs.readFile(goldenPath, 'utf8')]);
+  const limits = { ...DEFAULT_THRESHOLDS, ...thresholds };
+  const visual = await validateSvgVisual(goldenSvg, svg, {
+    minimumShapeIoU: limits.minimumShapeIoU,
+    maximumChangedForegroundRatio: limits.maximumChangedForegroundRatio,
+    maximumMeanChannelDelta: limits.maximumMeanChannelDelta,
+    maximumChangedPixelRatio: limits.maximumChangedPixelRatio ?? 0.03,
+    renderSize: limits.renderSize || 1024
   });
   const quality = inspectColorVectorQuality(svg, {});
   const nodes = countNodes(svg);
   const goldenNodes = countNodes(goldenSvg);
   const durationMs = Date.now() - started;
   const nodeRatio = goldenNodes ? nodes / goldenNodes : 1;
-  const limits = { ...DEFAULT_THRESHOLDS, ...thresholds };
   const failures = [];
-  if (!visual.passed) failures.push(...(visual.reasons || ['visual-validation-failed']));
+  if (!visual.accepted) failures.push(...(visual.reasons || ['visual-validation-failed']));
   if (nodeRatio > limits.maximumNodeRatio) failures.push(`node-ratio ${nodeRatio.toFixed(3)} > ${limits.maximumNodeRatio}`);
   if (durationMs > limits.maximumDurationMs) failures.push(`duration ${durationMs}ms > ${limits.maximumDurationMs}ms`);
   return {
@@ -59,8 +56,8 @@ async function inspectSvg(svgPath, goldenPath, thresholds = {}) {
     curveFitScore: quality.curveFitScore ?? null,
     paletteScore: quality.paletteScore ?? null,
     shapeIoU: visual.metrics?.shapeIoU ?? null,
-    foregroundChangedRatio: visual.metrics?.foregroundChangedRatio ?? null,
-    meanColorDelta: visual.metrics?.meanColorDelta ?? null,
+    foregroundChangedRatio: visual.metrics?.changedForegroundRatio ?? null,
+    meanColorDelta: visual.metrics?.meanChannelDelta ?? null,
     pass: failures.length === 0,
     failures
   };
@@ -69,8 +66,8 @@ async function inspectSvg(svgPath, goldenPath, thresholds = {}) {
 function compareBaseline(result, baseline) {
   if (!baseline) return { available: false, regressions: [] };
   const regressions = [];
-  if (result.shapeIoU != null && baseline.shapeIoU != null && result.shapeIoU < baseline.shapeIoU - 0.5) regressions.push('shapeIoU');
-  if (result.foregroundChangedRatio != null && baseline.foregroundChangedRatio != null && result.foregroundChangedRatio > baseline.foregroundChangedRatio + 0.5) regressions.push('foregroundChangedRatio');
+  if (result.shapeIoU != null && baseline.shapeIoU != null && result.shapeIoU < baseline.shapeIoU - 0.005) regressions.push('shapeIoU');
+  if (result.foregroundChangedRatio != null && baseline.foregroundChangedRatio != null && result.foregroundChangedRatio > baseline.foregroundChangedRatio + 0.005) regressions.push('foregroundChangedRatio');
   if (result.meanColorDelta != null && baseline.meanColorDelta != null && result.meanColorDelta > baseline.meanColorDelta + 1) regressions.push('meanColorDelta');
   if (result.nodeRatio > (baseline.nodeRatio || 1) * 1.15) regressions.push('nodeRatio');
   return { available: true, regressions };
@@ -82,8 +79,7 @@ function htmlReport(summary) {
 }
 
 async function runGoldenBenchmark({ rootDirectory, outputDirectory, version = 'dev' }) {
-  const manifestPath = path.join(rootDirectory, 'manifest.json');
-  const manifest = await readJson(manifestPath);
+  const manifest = await readJson(path.join(rootDirectory, 'manifest.json'));
   if (!manifest?.samples?.length) throw new Error('Golden benchmark manifest không có sample.');
   const globalThresholds = await readJson(path.join(rootDirectory, 'thresholds.json'), DEFAULT_THRESHOLDS);
   const baseline = await readJson(path.join(rootDirectory, 'baseline.json'), {});
@@ -91,23 +87,12 @@ async function runGoldenBenchmark({ rootDirectory, outputDirectory, version = 'd
   const results = [];
   for (const sample of manifest.samples) {
     const sampleRoot = path.join(rootDirectory, sample.directory);
-    const candidatePath = path.join(sampleRoot, sample.candidate || 'candidate.svg');
-    const goldenPath = path.join(sampleRoot, sample.golden || 'golden.svg');
-    const metrics = await inspectSvg(candidatePath, goldenPath, { ...globalThresholds, ...(sample.thresholds || {}) });
+    const metrics = await inspectSvg(path.join(sampleRoot, sample.candidate || 'candidate.svg'), path.join(sampleRoot, sample.golden || 'golden.svg'), { ...globalThresholds, ...(sample.thresholds || {}) });
     const baselineComparison = compareBaseline(metrics, baseline[sample.id]);
     const failures = [...metrics.failures, ...baselineComparison.regressions.map((name) => `baseline-regression:${name}`)];
     results.push({ id: sample.id, group: sample.group || null, directory: sample.directory, metrics, baselineComparison, failures, pass: failures.length === 0 });
   }
-  const summary = {
-    schemaVersion: 1,
-    version,
-    generatedAt: new Date().toISOString(),
-    total: results.length,
-    passed: results.filter((item) => item.pass).length,
-    failed: results.filter((item) => !item.pass).length,
-    pass: results.every((item) => item.pass),
-    results
-  };
+  const summary = { schemaVersion: 1, version, generatedAt: new Date().toISOString(), total: results.length, passed: results.filter((item) => item.pass).length, failed: results.filter((item) => !item.pass).length, pass: results.every((item) => item.pass), results };
   await fs.writeFile(path.join(outputDirectory, 'summary.json'), JSON.stringify(summary, null, 2));
   const headers = ['id','group','pass','shapeIoU','foregroundChangedRatio','meanColorDelta','nodeRatio','durationMs','failures'];
   const csvRows = results.map((item) => [item.id,item.group,item.pass,item.metrics.shapeIoU,item.metrics.foregroundChangedRatio,item.metrics.meanColorDelta,item.metrics.nodeRatio,item.metrics.durationMs,item.failures.join('|')].map(csvEscape).join(','));
