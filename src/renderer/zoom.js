@@ -13,6 +13,7 @@
   loadScript('zoom-core.js')
     .then(() => loadScript('vector-smart-ui.js'))
     .then(() => loadScript('vector-node-preview-ui.js'))
+    .then(() => loadScript('vector-cleanup-rerun-ui.js'))
     .then(() => loadScript('version-ui.js'))
     .then(() => loadScript('navigation-structure-safe.js'))
     .then(() => loadScript('license-ui.js'))
