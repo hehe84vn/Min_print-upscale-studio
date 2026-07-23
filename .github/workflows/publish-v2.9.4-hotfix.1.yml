@@ -93,3 +93,17 @@ jobs:
             --title "Print Upscale Studio V2.9.4 Hotfix 1" \
             --notes-file release-notes.md \
             --latest
+
+      - name: Record successful publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          status_file='.github/release/v2.9.4-hotfix.1-published'
+          status_text="Published ${RELEASE_TAG} from verified workflow run ${SOURCE_RUN_ID} at $(date -u +'%Y-%m-%dT%H:%M:%SZ')."
+          encoded=$(printf '%s\n' "$status_text" | base64 -w 0)
+          gh api --method PUT \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/contents/${status_file}" \
+            -f message="Record successful ${RELEASE_TAG} publication" \
+            -f content="$encoded" \
+            -f branch=main
