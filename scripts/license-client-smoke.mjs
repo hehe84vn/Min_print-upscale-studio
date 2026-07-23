@@ -22,6 +22,7 @@ for (const channel of ['image:process', 'production:start', 'benchmark:run', 'co
 }
 assert.match(bootstrap, /ensureProcessingAllowed/);
 assert.match(bootstrap, /makeInitializationIdempotent/);
+assert.match(bootstrap, /force: payload\.force === true/);
 assert.match(bootstrap, /license:login/);
 assert.match(bootstrap, /license:deactivate/);
 
@@ -37,6 +38,8 @@ assert.equal(publicKey.asymmetricKeyDetails?.modulusLength, 3072);
 assert.match(service, /safeStorage|secureSecretsService/);
 assert.match(service, /RSA_PKCS1_PSS_PADDING/);
 assert.match(service, /offline_entitlement_expired/);
+assert.match(service, /_blockNonRetriable/);
+assert.match(service, /remove\(SECRET\.entitlement\)/);
 assert.match(service, /generateKeyPairSync\('ec'/);
 assert.match(service, /dsaEncoding: 'ieee-p1363'/);
 assert.match(service, /proofTimestamp/);
@@ -45,8 +48,10 @@ assert.match(service, /deviceProof/);
 for (const api of ['getLicenseStatus', 'loginLicense', 'validateLicense', 'logoutLicense', 'deactivateLicense', 'onLicenseStatus']) {
   assert.match(preload, new RegExp(api), `Preload license API missing: ${api}`);
 }
+assert.match(preload, /getLicenseStatus: \(force = false\)/);
 assert.match(zoom, /license-ui\.js/);
 assert.match(ui, /licenseLoginForm/);
+assert.match(ui, /getLicenseStatus\(true\)/);
 assert.match(ui, /Hủy kích hoạt thiết bị/);
 
 assert.match(gateway, /verifyDeviceProof/);
