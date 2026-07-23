@@ -33,8 +33,8 @@ class SecureSecretsService {
 
   async set(name, value) {
     const normalized = typeof value === 'string' ? value.trim() : '';
-    if (!normalized) throw new Error('API key không được để trống.');
-    if (normalized.length > 4096) throw new Error('API key không hợp lệ.');
+    if (!normalized) throw new Error('Dữ liệu bảo mật không được để trống.');
+    if (normalized.length > 32768) throw new Error('Dữ liệu bảo mật vượt quá giới hạn cho phép.');
 
     this.ensureEncryptionAvailable();
     const store = await this.readEncryptedStore();
@@ -51,7 +51,7 @@ class SecureSecretsService {
     try {
       return safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
     } catch {
-      throw new Error('Không thể giải mã API key đã lưu trên thiết bị này.');
+      throw new Error('Không thể giải mã dữ liệu bảo mật đã lưu trên thiết bị này.');
     }
   }
 
