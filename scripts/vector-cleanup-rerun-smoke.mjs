@@ -20,10 +20,13 @@ try {
   assert.equal(masterPath, masterPathForOutput(outputPath));
   const originalMaster = await fs.readFile(masterPath, 'utf8');
 
+  // This smoke test verifies deterministic profile reruns and Master SVG
+  // immutability. Visual fallback behavior is covered separately by
+  // vector-visual-validation-smoke.mjs.
   const smooth = await rerunVectorCleanup({
     inputPath: masterPath,
     outputPath,
-    options: { profile: 'smooth' }
+    options: { profile: 'smooth', visualValidation: false }
   });
   const smoothSvg = await fs.readFile(outputPath, 'utf8');
   assert.equal(smooth.vectorCleanup.profile, 'smooth');
@@ -32,7 +35,7 @@ try {
   const precise = await rerunVectorCleanup({
     inputPath: masterPath,
     outputPath,
-    options: { profile: 'precise' }
+    options: { profile: 'precise', visualValidation: false }
   });
   const preciseSvg = await fs.readFile(outputPath, 'utf8');
   assert.equal(precise.vectorCleanup.profile, 'precise');
