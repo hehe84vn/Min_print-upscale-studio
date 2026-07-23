@@ -1,0 +1,4 @@
+project_id = "print-upscale-studio"
+
+[functions.license-gateway]
+verify_jwt = true
