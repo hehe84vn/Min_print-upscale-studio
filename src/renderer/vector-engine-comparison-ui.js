@@ -1,0 +1,157 @@
+(() => {
+  const get = (id) => document.getElementById(id);
+  const settings = get('vectorSettings');
+  const afterImage = get('afterImage');
+  const resultBox = get('resultBox');
+  if (!settings || !afterImage || !resultBox || !window.studio) return;
+
+  let assets = [];
+  let activeAssetId = null;
+
+  function engineName(value) {
+    const id = String(value || '').toLowerCase();
+    if (id.includes('autotrace')) return 'AutoTrace';
+    if (id.includes('vtracer')) return 'VTracer';
+    if (id.includes('potrace')) return 'Potrace';
+    return value || 'Engine';
+  }
+
+  function install() {
+    if (get('vectorEngineComparison')) return;
+    const style = document.createElement('style');
+    style.textContent = `
+      .vector-engine-comparison { border: 1px solid #45596c; background: #111a23; border-radius: 10px; padding: 10px; display: grid; gap: 8px; }
+      .vector-engine-comparison[hidden] { display: none; }
+      .vector-engine-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+      .vector-engine-head strong { color: #d9e8f5; font-size: 11px; }
+      .vector-engine-grid { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+      .vector-engine-actions { display: flex; gap: 6px; }
+      .vector-engine-actions button { min-width: 72px; }
+      .vector-engine-meta { color: #93a9bb; font-size: 9px; line-height: 1.45; margin: 0; }
+      .vector-engine-meta.reject { color: #ffaaa4; }
+    `;
+    document.head.append(style);
+
+    const panel = document.createElement('section');
+    panel.id = 'vectorEngineComparison';
+    panel.className = 'vector-engine-comparison';
+    panel.hidden = true;
+    panel.innerHTML = `
+      <div class="vector-engine-head">
+        <strong>So sánh candidate engine</strong>
+        <span class="smart-vector-badge">NO RETRACE</span>
+      </div>
+      <div class="vector-engine-grid">
+        <select id="vectorEngineCandidate"></select>
+        <div class="vector-engine-actions">
+          <button id="vectorEnginePreview" class="secondary" type="button">Xem</button>
+          <button id="vectorEngineApply" class="secondary" type="button">Chọn</button>
+        </div>
+      </div>
+      <p id="vectorEngineMeta" class="vector-engine-meta"></p>
+    `;
+    settings.append(panel);
+    get('vectorEngineCandidate').addEventListener('change', syncMeta);
+    get('vectorEnginePreview').addEventListener('click', previewCandidate);
+    get('vectorEngineApply').addEventListener('click', applyCandidate);
+  }
+
+  function selectedAsset() {
+    const id = get('vectorEngineCandidate')?.value;
+    return assets.find((asset) => String(asset.id) === String(id)) || null;
+  }
+
+  function syncMeta() {
+    const asset = selectedAsset();
+    const meta = get('vectorEngineMeta');
+    const apply = get('vectorEngineApply');
+    if (!asset) {
+      meta.textContent = '';
+      apply.disabled = true;
+      return;
+    }
+    const metrics = asset.metrics || {};
+    const selected = asset.selected || asset.id === activeAssetId ? ' · đang dùng' : '';
+    const rejected = asset.rejected ? ` · REJECT${asset.rejectedReason ? `: ${asset.rejectedReason}` : ''}` : '';
+    meta.textContent = `${engineName(asset.engine)}${selected} · score ${asset.consensusScore ?? asset.score ?? '—'} · agreement ${asset.agreementScore ?? '—'} · fidelity ${metrics.fidelity ?? '—'} · recall ${metrics.edgeRecall ?? '—'} · curve ${metrics.curveFitScore ?? '—'} · ${metrics.nodeEstimate ?? '—'} node${rejected}`;
+    meta.classList.toggle('reject', Boolean(asset.rejected));
+    apply.disabled = Boolean(asset.rejected) || asset.id === activeAssetId || state.busy;
+  }
+
+  function render(payload) {
+    assets = Array.isArray(payload?.vectorReport?.candidateAssets) ? payload.vectorReport.candidateAssets : [];
+    const panel = get('vectorEngineComparison');
+    panel.hidden = assets.length < 2;
+    if (assets.length < 2) return;
+
+    activeAssetId = assets.find((asset) => asset.selected)?.id || payload?.vectorReport?.selectedCandidate || null;
+    const select = get('vectorEngineCandidate');
+    select.replaceChildren();
+    for (const asset of assets) {
+      const option = document.createElement('option');
+      option.value = asset.id;
+      option.textContent = `${engineName(asset.engine)}${asset.selected ? ' · Auto chọn' : ''}${asset.rejected ? ' · REJECT' : ''}`;
+      select.append(option);
+    }
+    select.value = String(activeAssetId || assets[0].id);
+    syncMeta();
+  }
+
+  async function previewCandidate() {
+    const asset = selectedAsset();
+    if (!asset?.path) return;
+    const url = await window.studio.fileUrl(asset.path);
+    afterImage.src = `${url}?t=${Date.now()}`;
+    get('compareStage').hidden = false;
+    get('compareControls').hidden = false;
+    resultBox.textContent = `${resultBox.textContent}\nĐang preview raw candidate: ${engineName(asset.engine)} · chưa thay đổi file đầu ra.`;
+  }
+
+  async function applyCandidate() {
+    const asset = selectedAsset();
+    if (!asset?.path || asset.rejected || state.busy) return;
+
+    try {
+      state.busy = true;
+      syncMeta();
+      get('progressWrap').hidden = false;
+      get('progressBar').style.width = '5%';
+      get('progressText').textContent = `Đang chọn ${engineName(asset.engine)} mà không trace lại...`;
+
+      const response = await window.studio.process({
+        operation: 'vector-candidate-select',
+        inputPath: asset.path,
+        outputPath: state.outputPath,
+        options: {
+          candidateId: asset.id,
+          engine: asset.engine,
+          profile: 'auto',
+          pathPrecision: 3
+        }
+      });
+      const result = typeof response?.outputPath === 'object' ? response.outputPath : null;
+      if (!result?.outputPath) throw new Error('Không nhận được SVG sau khi chọn candidate.');
+
+      activeAssetId = asset.id;
+      assets = assets.map((item) => ({ ...item, selected: item.id === activeAssetId }));
+      const url = await window.studio.fileUrl(result.outputPath);
+      afterImage.src = `${url}?t=${Date.now()}`;
+      const cleanup = result.vectorCleanup;
+      resultBox.classList.remove('error');
+      resultBox.textContent = `Đã chọn ${engineName(asset.engine)} không retrace.\nCandidate: ${asset.path}\nOutput: ${result.outputPath}${cleanup ? `\nCleanup ${result.selectedProfile}: ${cleanup.nodesBefore} → ${cleanup.nodesAfter} node · giảm ${cleanup.nodeReduction}%` : ''}`;
+      resultBox.hidden = false;
+      syncMeta();
+    } catch (error) {
+      resultBox.classList.add('error');
+      resultBox.textContent = `Không thể chọn candidate: ${error.message || error}`;
+      resultBox.hidden = false;
+    } finally {
+      state.busy = false;
+      syncMeta();
+    }
+  }
+
+  install();
+  window.addEventListener('vector:result', (event) => render(event.detail));
+  if (state.vectorPayload) render(state.vectorPayload);
+})();
