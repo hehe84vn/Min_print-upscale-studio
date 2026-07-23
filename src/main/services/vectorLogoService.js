@@ -8,6 +8,7 @@ const engine = require('./vectorLogoEngine');
 const { vectorizeMonochromeWithPotrace } = require('./potraceSmartService');
 const { runColorMultiEngine } = require('./colorVectorRouterService');
 const { cleanupVectorSvg } = require('./vectorCleanupService');
+const { saveVectorMaster } = require('./vectorCleanupRerunService');
 const {
   analyzeVectorInput,
   formatVectorInputRejection
@@ -187,6 +188,7 @@ function cleanupProfileForResult(result) {
 
 async function applySharedVectorCleanup(result) {
   const originalSvg = await fs.readFile(result.outputPath, 'utf8');
+  const masterPath = await saveVectorMaster(result.outputPath, originalSvg);
   const before = engine.inspectSvgComplexity(originalSvg);
   const cleaned = cleanupVectorSvg(originalSvg, {
     profile: cleanupProfileForResult(result),
@@ -195,8 +197,11 @@ async function applySharedVectorCleanup(result) {
   const after = engine.inspectSvgComplexity(cleaned.svg);
   await fs.writeFile(result.outputPath, cleaned.svg, 'utf8');
 
+  result.masterPath = masterPath;
+  result.vectorReport.masterPath = masterPath;
   result.vectorReport.vectorCleanup = {
     ...cleaned.stats,
+    masterPath,
     nodesBefore: before.nodeEstimate,
     nodesAfter: after.nodeEstimate,
     nodeReduction: before.nodeEstimate > 0
