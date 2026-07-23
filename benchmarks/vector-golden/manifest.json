@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "samples": [
+    {
+      "id": "fixture-curves-colors",
+      "group": "infrastructure-fixture",
+      "directory": "samples/fixture-curves-colors",
+      "golden": "golden.svg",
+      "candidate": "candidate.svg"
+    }
+  ]
+}
