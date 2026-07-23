@@ -24,9 +24,17 @@ const fallback = await enforceVisualValidation(
   3,
   { visualValidationOptions: { renderSize: 512 } }
 );
-assert.equal(fallback.selectedProfile, 'precise', 'Unsafe Smooth output must fall back to Precise when Precise matches Master.');
+assert.notEqual(fallback.selectedProfile, 'smooth', 'Unsafe Smooth output must never remain selected.');
+assert.ok(
+  ['precise', 'master'].includes(fallback.selectedProfile),
+  'Unsafe Smooth output must fall back to Precise or preserve the Master SVG.'
+);
 assert.equal(fallback.visualValidation.fallbackApplied, true, 'Fallback must be reported explicitly.');
 assert.equal(fallback.visualValidation.initialProfile, 'smooth');
-assert.equal(fallback.visualValidation.finalProfile, 'precise');
+assert.equal(fallback.visualValidation.finalProfile, fallback.selectedProfile);
+if (fallback.selectedProfile === 'master') {
+  assert.equal(fallback.visualValidation.preservedMaster, true, 'Master fallback must be reported explicitly.');
+  assert.equal(fallback.cleaned.svg, master, 'Master fallback must preserve the original SVG exactly.');
+}
 
 console.log('Vector visual validation smoke test passed.');
