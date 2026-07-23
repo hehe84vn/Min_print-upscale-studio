@@ -185,7 +185,7 @@
     }
   }
 
-  function applyStaticCopy() {
+  function applyStaticCopy({ replaceAll = false } = {}) {
     const brandVersion = document.querySelector('.brand span');
     if (brandVersion && brandVersion.textContent !== VERSION_LABEL) brandVersion.textContent = VERSION_LABEL;
 
@@ -197,7 +197,7 @@
       vectorNotice.textContent = 'Tạo vector sơ bộ cho logo, con dấu và line art. Hãy kiểm tra và hoàn thiện trong Illustrator trước khi sản xuất.';
     }
 
-    replaceLegacyText(document.body);
+    if (replaceAll) replaceLegacyText(document.body);
   }
 
   function syncToolPresentation(tool = activeTool()) {
@@ -225,7 +225,6 @@
     const brandVersion = document.querySelector('.brand span');
     if (brandVersion && brandVersion.textContent !== VERSION_LABEL) brandVersion.textContent = VERSION_LABEL;
     document.title = `Print Upscale Studio V2.9.4 · ${copy.title}`;
-    replaceLegacyText(document.body);
   }
 
   function bindCopySync() {
@@ -250,7 +249,7 @@
       nav.replaceChildren(...groups);
       installSystemGroup();
       bindCopySync();
-      applyStaticCopy();
+      applyStaticCopy({ replaceAll: true });
       syncToolPresentation();
       return true;
     } finally {
