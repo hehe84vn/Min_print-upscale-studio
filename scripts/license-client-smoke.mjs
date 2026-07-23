@@ -21,6 +21,7 @@ for (const channel of ['image:process', 'production:start', 'benchmark:run', 'co
   assert.match(bootstrap, new RegExp(channel.replace(':', '\\:')), `Protected channel missing: ${channel}`);
 }
 assert.match(bootstrap, /ensureProcessingAllowed/);
+assert.match(bootstrap, /makeInitializationIdempotent/);
 assert.match(bootstrap, /license:login/);
 assert.match(bootstrap, /license:deactivate/);
 
