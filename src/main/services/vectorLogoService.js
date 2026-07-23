@@ -7,6 +7,7 @@ const sharp = require('sharp');
 const engine = require('./vectorLogoEngine');
 const { vectorizeMonochromeWithPotrace } = require('./potraceSmartService');
 const { runColorMultiEngine } = require('./colorVectorRouterService');
+const { cleanupVectorSvg } = require('./vectorCleanupService');
 const {
   analyzeVectorInput,
   formatVectorInputRejection
@@ -177,7 +178,49 @@ function applyConservativeInputPolicy(inputQuality) {
   return inputQuality;
 }
 
+function cleanupProfileForResult(result) {
+  const strategy = result?.vectorReport?.strategy;
+  if (strategy === 'detail') return 'precise';
+  if (strategy === 'compact') return 'smooth';
+  return 'balanced';
+}
+
+async function applySharedVectorCleanup(result) {
+  const originalSvg = await fs.readFile(result.outputPath, 'utf8');
+  const before = engine.inspectSvgComplexity(originalSvg);
+  const cleaned = cleanupVectorSvg(originalSvg, {
+    profile: cleanupProfileForResult(result),
+    pathPrecision: 3
+  });
+  const after = engine.inspectSvgComplexity(cleaned.svg);
+  await fs.writeFile(result.outputPath, cleaned.svg, 'utf8');
+
+  result.vectorReport.vectorCleanup = {
+    ...cleaned.stats,
+    nodesBefore: before.nodeEstimate,
+    nodesAfter: after.nodeEstimate,
+    nodeReduction: before.nodeEstimate > 0
+      ? Number((((before.nodeEstimate - after.nodeEstimate) / before.nodeEstimate) * 100).toFixed(2))
+      : 0,
+    svgBytesBefore: before.svgBytes,
+    svgBytesAfter: after.svgBytes
+  };
+
+  const cleanupWarnings = [];
+  if (cleaned.stats.parseErrors) cleanupWarnings.push(`${cleaned.stats.parseErrors} path không thể phân tích để cleanup tự động.`);
+  if (cleaned.stats.openSubpathsRemaining) cleanupWarnings.push(`Còn ${cleaned.stats.openSubpathsRemaining} subpath hở cần designer kiểm tra.`);
+  if (cleanupWarnings.length) {
+    result.vectorReport.warnings = [
+      ...cleanupWarnings.map((warning) => `Vector Cleanup: ${warning}`),
+      ...(result.vectorReport.warnings || [])
+    ];
+    if (result.vectorReport.qualityGate) result.vectorReport.qualityGate.status = 'review';
+  }
+  return result;
+}
+
 async function attachInputQuality(result, inputPath, inputQuality, backgroundCleanup = null) {
+  await applySharedVectorCleanup(result);
   result.vectorReport.inputPath = inputPath;
   result.vectorReport.inputQuality = inputQuality;
   if (backgroundCleanup) result.vectorReport.backgroundCleanup = backgroundCleanup;
@@ -281,6 +324,7 @@ module.exports = {
   ...engine,
   analyzeVectorInput,
   applyConservativeInputPolicy,
+  applySharedVectorCleanup,
   clearConnectedBorder,
   detectBorderBackground,
   safeBackgroundCleanup,
