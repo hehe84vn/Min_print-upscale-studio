@@ -13,5 +13,6 @@
   loadScript('zoom-core.js')
     .then(() => loadScript('vector-smart-ui.js'))
     .then(() => loadScript('version-ui.js'))
+    .then(() => loadScript('navigation-structure.js'))
     .catch((error) => console.error('Renderer extension loader:', error));
 })();
