@@ -44,7 +44,11 @@ function makeInitializationIdempotent(service) {
 }
 
 function registerLicenseIpc() {
-  originalHandle('license:status', async () => requireLicenseService().initialize());
+  originalHandle('license:status', async (_event, payload = {}) => {
+    const status = await requireLicenseService().initialize({ force: payload.force === true });
+    if (payload.force === true) broadcastStatus(status);
+    return status;
+  });
 
   originalHandle('license:login', async (_event, payload = {}) => {
     const status = await requireLicenseService().login(payload.email, payload.password);
