@@ -1,6 +1,8 @@
 'use strict';
 
 const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const engine = require('./vectorLogoEngine');
 const { buildAutoTraceColorCandidate } = require('./autotraceSplineCandidateService');
 const { inspectColorVectorQuality, rankColorCandidates } = require('./colorVectorQualityService');
@@ -136,6 +138,47 @@ function replaceCandidateMetadata(report, candidate) {
     : item);
 }
 
+function candidateFileName(candidate, index) {
+  const engineId = String(candidate.engine || candidate.trace?.engine || `engine-${index + 1}`)
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-');
+  const candidateId = String(candidate.id || `candidate-${index + 1}`)
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-');
+  return `${engineId}-${candidateId}.svg`;
+}
+
+async function persistCandidateAssets(candidates, selectedId) {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'print-vector-candidates-'));
+  const assets = [];
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    if (!candidate?.svg) continue;
+    const filePath = path.join(directory, candidateFileName(candidate, index));
+    await fs.writeFile(filePath, candidate.svg, 'utf8');
+    assets.push({
+      id: candidate.id,
+      engine: candidate.engine || candidate.trace?.engine || 'unknown',
+      label: candidate.label || candidate.id,
+      path: filePath,
+      selected: candidate.id === selectedId,
+      rejected: Boolean(candidate.rejected),
+      rejectedReason: candidate.rejectedReason || null,
+      score: candidate.score ?? null,
+      consensusScore: candidate.consensusScore ?? null,
+      agreementScore: candidate.consensus?.agreementScore ?? null,
+      metrics: {
+        fidelity: candidate.metrics?.fidelity ?? null,
+        edgeRecall: candidate.metrics?.edgeRecall ?? null,
+        curveFitScore: candidate.metrics?.curveFitScore ?? null,
+        paletteScore: candidate.metrics?.paletteScore ?? null,
+        nodeEstimate: candidate.metrics?.nodeEstimate ?? null
+      }
+    });
+  }
+  return assets;
+}
+
 async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProgress }) {
   const requestedStrategy = options.strategy || 'smart';
   const vtracerStrategy = routedVTracerStrategy(requestedStrategy);
@@ -239,6 +282,7 @@ async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProg
     renderSize: Number(options.consensusRenderSize) || 640
   });
   const selected = ranked.find((candidate) => !candidate.rejected) || ranked[0];
+  const candidateAssets = await persistCandidateAssets(ranked, selected.id);
   await fs.writeFile(outputPath, selected.svg, 'utf8');
 
   const comparisonMetadata = ranked.map(withoutSvg);
@@ -246,9 +290,10 @@ async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProg
   const autotraceCompared = comparisonMetadata.find((candidate) => candidate.engine === 'autotrace');
   if (vtracerCompared) replaceCandidateMetadata(report, { ...vtracerCompared, svg: '' });
   if (autotraceCompared) report.candidates.push(autotraceCompared);
-  report.schemaVersion = 10;
+  report.schemaVersion = 11;
   report.selectedCandidate = selected.id;
   report.selectedScore = selected.consensusScore ?? selected.score;
+  report.candidateAssets = candidateAssets;
   report.engineRouter = {
     selectedEngine: selected.engine,
     actualEngine: selected.trace?.engine || selected.engine,
@@ -282,9 +327,11 @@ async function runColorMultiEngine({ inputPath, outputPath, options = {}, onProg
 
 module.exports = {
   applyStandaloneColorQuality,
+  candidateFileName,
   colorQualityGate,
   colorWarnings,
   markVTracerCandidate,
+  persistCandidateAssets,
   routedPaletteColors,
   routedVTracerStrategy,
   runColorMultiEngine,

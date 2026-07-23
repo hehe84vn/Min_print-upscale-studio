@@ -245,6 +245,8 @@
       const actualOutputPath = typeof payload === 'string' ? payload : payload?.outputPath;
       if (!actualOutputPath) throw new Error('Vector engine không trả về đường dẫn SVG hợp lệ.');
       state.outputPath = actualOutputPath;
+      state.vectorPayload = typeof payload === 'object' ? payload : null;
+      window.dispatchEvent(new CustomEvent('vector:result', { detail: state.vectorPayload }));
 
       const resultBox = get('resultBox');
       resultBox.classList.toggle('error', payload?.vectorReport?.qualityGate?.status !== 'pass');
