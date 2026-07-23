@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { cleanupVectorSvg } = require('./vectorCleanupService');
 const { inspectSvgComplexity } = require('./vectorLogoEngine');
+const { validateSvgVisual } = require('./vectorVisualValidationService');
 
 const CLEANUP_PROFILES = new Set(['auto', 'precise', 'balanced', 'smooth']);
 const PROFILE_ORDER = ['precise', 'balanced', 'smooth'];
@@ -93,6 +94,79 @@ function cleanupReport(profile, before, after, cleaned, extra = {}) {
   };
 }
 
+function masterStats(before) {
+  return {
+    profile: 'master',
+    pathCountBefore: before.pathCount,
+    pathCountAfter: before.pathCount,
+    duplicatePathsRemoved: 0,
+    tinyPathsRemoved: 0,
+    microSegmentsRemoved: 0,
+    curvesConvertedToLines: 0,
+    axisSnaps: 0,
+    collinearNodesRemoved: 0,
+    tangentJunctionsSmoothed: 0,
+    cubicPairsMerged: 0,
+    maximumBezierDeviation: 0,
+    autoClosedSubpaths: 0,
+    openSubpathsRemaining: 0,
+    parseErrors: 0
+  };
+}
+
+async function enforceVisualValidation(masterSvg, selectedProfile, cleaned, before, pathPrecision, options, onProgress) {
+  if (options.visualValidation === false) {
+    return { selectedProfile, cleaned, after: inspectSvgComplexity(cleaned.svg), visualValidation: { skipped: true } };
+  }
+
+  onProgress?.(72, 'Đang so sánh pixel Master SVG và Clean SVG');
+  const initial = await validateSvgVisual(masterSvg, cleaned.svg, options.visualValidationOptions || {});
+  if (initial.accepted) {
+    return {
+      selectedProfile,
+      cleaned,
+      after: inspectSvgComplexity(cleaned.svg),
+      visualValidation: { ...initial, initialProfile: selectedProfile, finalProfile: selectedProfile, fallbackApplied: false }
+    };
+  }
+
+  if (selectedProfile !== 'precise') {
+    onProgress?.(82, 'Clean SVG lệch hình; đang fallback về Precise');
+    const precise = cleanupVectorSvg(masterSvg, { profile: 'precise', pathPrecision });
+    const preciseValidation = await validateSvgVisual(masterSvg, precise.svg, options.visualValidationOptions || {});
+    if (preciseValidation.accepted) {
+      return {
+        selectedProfile: 'precise',
+        cleaned: precise,
+        after: inspectSvgComplexity(precise.svg),
+        visualValidation: {
+          ...preciseValidation,
+          initialProfile: selectedProfile,
+          finalProfile: 'precise',
+          fallbackApplied: true,
+          initialFailure: initial
+        }
+      };
+    }
+    initial.preciseFailure = preciseValidation;
+  }
+
+  return {
+    selectedProfile: 'master',
+    cleaned: { svg: masterSvg, stats: masterStats(before) },
+    after: before,
+    visualValidation: {
+      accepted: true,
+      initialProfile: selectedProfile,
+      finalProfile: 'master',
+      fallbackApplied: true,
+      preservedMaster: true,
+      initialFailure: initial,
+      reasons: ['Cleanup không vượt Visual Validation; giữ nguyên Master SVG.']
+    }
+  };
+}
+
 async function rerunVectorCleanup({ inputPath, outputPath, options = {}, onProgress }) {
   if (!inputPath || !outputPath) throw new Error('Thiếu Master SVG hoặc đường dẫn file đầu ra.');
   const requestedProfile = normalizeProfile(options.profile);
@@ -119,6 +193,7 @@ async function rerunVectorCleanup({ inputPath, outputPath, options = {}, onProgr
     after = inspectSvgComplexity(cleaned.svg);
     autoSelection = {
       requestedProfile: 'auto',
+      initialSelectedProfile: selectedProfile,
       selectedProfile,
       fallbackToPrecise: !selected.accepted,
       candidates: candidates.map(({ svg, stats, ...candidate }) => candidate)
@@ -129,8 +204,17 @@ async function rerunVectorCleanup({ inputPath, outputPath, options = {}, onProgr
     after = inspectSvgComplexity(cleaned.svg);
   }
 
+  const validated = await enforceVisualValidation(masterSvg, selectedProfile, cleaned, before, pathPrecision, options, onProgress);
+  selectedProfile = validated.selectedProfile;
+  cleaned = validated.cleaned;
+  after = validated.after;
+  if (autoSelection) autoSelection.selectedProfile = selectedProfile;
+
   await fs.writeFile(outputPath, cleaned.svg, 'utf8');
-  const report = cleanupReport(selectedProfile, before, after, cleaned, autoSelection ? { autoSelection } : {});
+  const report = cleanupReport(selectedProfile, before, after, cleaned, {
+    ...(autoSelection ? { autoSelection } : {}),
+    visualValidation: validated.visualValidation
+  });
 
   onProgress?.(100, `Cleanup ${selectedProfile} hoàn tất · ${before.nodeEstimate} → ${after.nodeEstimate} node`);
   return {
@@ -146,6 +230,7 @@ module.exports = {
   CLEANUP_PROFILES,
   PROFILE_ORDER,
   chooseAutomaticCandidate,
+  enforceVisualValidation,
   evaluateCandidate,
   masterPathForOutput,
   normalizeProfile,
