@@ -142,7 +142,7 @@
   async function refreshStatus({ manual = false } = {}) {
     setPending(true, manual ? 'Đang xác minh lại license...' : 'Đang kiểm tra quyền sử dụng...');
     try {
-      const status = manual ? await window.studio.validateLicense() : await window.studio.getLicenseStatus();
+      const status = manual ? await window.studio.validateLicense() : await window.studio.getLicenseStatus(true);
       render(status);
     } catch (error) {
       render({
