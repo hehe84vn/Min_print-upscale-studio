@@ -6,6 +6,7 @@ const {
   parseSvgSize,
   serializePathData
 } = require('./vectorGeometryLock');
+const { optimizeBezierSegments } = require('./vectorBezierOptimizer');
 
 function clamp(value, minimum, maximum, fallback) {
   const number = Number(value);
@@ -145,7 +146,20 @@ function cleanupVectorSvg(svg, options = {}) {
   const closeTolerance = clamp(options.closeTolerance, 0, maximum * 0.02, maximum * 0.00045 * profileFactor);
   const minimumPathExtent = clamp(options.minimumPathExtent, 0, maximum * 0.1, maximum * 0.0008 * profileFactor);
   const minimumPathLength = clamp(options.minimumPathLength, 0, maximum, maximum * 0.0018 * profileFactor);
+  const bezierErrorTolerance = clamp(options.bezierErrorTolerance, 0.01, maximum * 0.01, maximum * 0.00035 * profileFactor);
   const precision = Math.round(clamp(options.pathPrecision, 1, 6, 3));
+  const smoothAngleDegrees = clamp(
+    options.smoothAngleDegrees,
+    0.1,
+    45,
+    profile === 'precise' ? 7 : profile === 'smooth' ? 16 : 11
+  );
+  const mergeAngleDegrees = clamp(
+    options.mergeAngleDegrees,
+    0.1,
+    30,
+    profile === 'precise' ? 2.5 : profile === 'smooth' ? 7 : 4.5
+  );
 
   const stats = {
     profile,
@@ -157,6 +171,9 @@ function cleanupVectorSvg(svg, options = {}) {
     curvesConvertedToLines: 0,
     axisSnaps: 0,
     collinearNodesRemoved: 0,
+    tangentJunctionsSmoothed: 0,
+    cubicPairsMerged: 0,
+    maximumBezierDeviation: 0,
     autoClosedSubpaths: 0,
     openSubpathsRemaining: 0,
     parseErrors: 0,
@@ -164,7 +181,10 @@ function cleanupVectorSvg(svg, options = {}) {
     microSegmentThreshold,
     closeTolerance,
     minimumPathExtent,
-    minimumPathLength
+    minimumPathLength,
+    bezierErrorTolerance,
+    smoothAngleDegrees,
+    mergeAngleDegrees
   };
 
   const seen = new Set();
@@ -186,6 +206,17 @@ function cleanupVectorSvg(svg, options = {}) {
       stats.curvesConvertedToLines += cleaned.stats.curvesConvertedToLines;
       stats.axisSnaps += cleaned.stats.axisSnaps;
       stats.collinearNodesRemoved += cleaned.stats.collinearNodesRemoved;
+
+      const bezier = optimizeBezierSegments(segments, {
+        errorTolerance: bezierErrorTolerance,
+        junctionTolerance: Math.max(0.01, lineTolerance * 0.35),
+        smoothAngleDegrees,
+        mergeAngleDegrees
+      });
+      segments = bezier.segments;
+      stats.tangentJunctionsSmoothed += bezier.stats.tangentJunctionsSmoothed;
+      stats.cubicPairsMerged += bezier.stats.cubicPairsMerged;
+      stats.maximumBezierDeviation = Math.max(stats.maximumBezierDeviation, bezier.stats.maximumDeviation);
 
       const closed = closeEligibleSubpaths(segments, closeTolerance);
       segments = closed.segments;
@@ -218,6 +249,7 @@ function cleanupVectorSvg(svg, options = {}) {
     }
   });
 
+  stats.maximumBezierDeviation = Number(stats.maximumBezierDeviation.toFixed(4));
   return { svg: output, stats };
 }
 
