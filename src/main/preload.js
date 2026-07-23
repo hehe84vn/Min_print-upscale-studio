@@ -37,6 +37,11 @@ contextBridge.exposeInMainWorld('studio', {
   saveAiSettings: (payload) => ipcRenderer.invoke('ai:settings:save', payload),
   clearAiKey: (provider) => ipcRenderer.invoke('ai:settings:clear-key', provider),
   testAiConnection: (provider) => ipcRenderer.invoke('ai:settings:test', provider),
+  getLicenseStatus: () => ipcRenderer.invoke('license:status'),
+  loginLicense: (payload) => ipcRenderer.invoke('license:login', payload),
+  validateLicense: () => ipcRenderer.invoke('license:validate'),
+  logoutLicense: () => ipcRenderer.invoke('license:logout'),
+  deactivateLicense: () => ipcRenderer.invoke('license:deactivate'),
   onProgress: (callback) => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('job:progress', listener);
@@ -46,5 +51,10 @@ contextBridge.exposeInMainWorld('studio', {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('production:status', listener);
     return () => ipcRenderer.removeListener('production:status', listener);
+  },
+  onLicenseStatus: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('license:status-changed', listener);
+    return () => ipcRenderer.removeListener('license:status-changed', listener);
   }
 });
