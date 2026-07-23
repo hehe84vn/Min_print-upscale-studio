@@ -37,7 +37,7 @@ contextBridge.exposeInMainWorld('studio', {
   saveAiSettings: (payload) => ipcRenderer.invoke('ai:settings:save', payload),
   clearAiKey: (provider) => ipcRenderer.invoke('ai:settings:clear-key', provider),
   testAiConnection: (provider) => ipcRenderer.invoke('ai:settings:test', provider),
-  getLicenseStatus: () => ipcRenderer.invoke('license:status'),
+  getLicenseStatus: (force = false) => ipcRenderer.invoke('license:status', { force: force === true }),
   loginLicense: (payload) => ipcRenderer.invoke('license:login', payload),
   validateLicense: () => ipcRenderer.invoke('license:validate'),
   logoutLicense: () => ipcRenderer.invoke('license:logout'),
