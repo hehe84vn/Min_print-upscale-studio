@@ -51,7 +51,7 @@ async function writeRaster(pipeline, outputPath, options = {}) {
 }
 
 function textAwareEnabled(options = {}) {
-  return options.textPriority === true || options.textAware === true || options.imageType === 'logo-text';
+  return options.textPriority !== false && options.textAware !== false;
 }
 
 async function finishUpscale(input, outputPath, options, onProgress) {
