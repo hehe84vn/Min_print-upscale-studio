@@ -7,6 +7,7 @@ const { enhanceImage } = require('./aiProviderService');
 const { vectorizeLogo } = require('./vectorLogoService');
 const { rerunVectorCleanup } = require('./vectorCleanupRerunService');
 const { selectVectorCandidate } = require('./vectorCandidateSelectionService');
+const { enhanceTextAware } = require('./textAwareUpscaleService');
 
 const MAX_SCALE = 8;
 
@@ -49,6 +50,28 @@ async function writeRaster(pipeline, outputPath, options = {}) {
   return outputPath;
 }
 
+function textAwareEnabled(options = {}) {
+  return options.textPriority === true || options.textAware === true || options.imageType === 'logo-text';
+}
+
+async function finishUpscale(input, outputPath, options, onProgress) {
+  if (!textAwareEnabled(options)) {
+    await writeRaster(sharp(input, { failOn: 'none' }), outputPath, options);
+    return { outputPath, textAware: null };
+  }
+
+  onProgress?.(82, 'Đang làm rõ chữ và khử viền quanh nét');
+  const enhanced = await enhanceTextAware(input, {
+    textStrength: options.textStrength ?? 0.58,
+    haloLimit: options.haloLimit ?? 12,
+    edgeThreshold: options.textEdgeThreshold,
+    maskRadius: options.textMaskRadius ?? 1,
+    maximumPixels: options.textMaximumPixels ?? 48_000_000
+  });
+  await writeRaster(sharp(enhanced.buffer, { failOn: 'none' }), outputPath, options);
+  return { outputPath, textAware: enhanced.stats };
+}
+
 async function upscaleFallback(inputPath, outputPath, scale, options, onProgress) {
   const size = await dimensions(inputPath, scale);
   onProgress?.(15, scale > 4 ? `AI 4× không khả dụng, đang resize Lanczos đến ${Number(scale.toFixed(2))}×` : 'Đang phóng lớn bằng chế độ tương thích');
@@ -56,10 +79,13 @@ async function upscaleFallback(inputPath, outputPath, scale, options, onProgress
     .rotate()
     .resize(size.width, size.height, { kernel: sharp.kernel.lanczos3 });
 
-  if (options.sharpen !== false && scale > 1) pipeline = pipeline.sharpen({ sigma: 1.1, m1: 0.8, m2: 2.2 });
+  if (!textAwareEnabled(options) && options.sharpen !== false && scale > 1) {
+    pipeline = pipeline.sharpen({ sigma: 1.1, m1: 0.8, m2: 2.2 });
+  }
 
+  const resized = await pipeline.png({ compressionLevel: 4 }).toBuffer();
   onProgress?.(70, 'Đang hoàn thiện ảnh');
-  await writeRaster(pipeline, outputPath, options);
+  await finishUpscale(resized, outputPath, options, onProgress);
   onProgress?.(100, 'Hoàn tất');
   return outputPath;
 }
@@ -68,7 +94,8 @@ async function upscale({ settingsService, inputPath, outputPath, options, onProg
   const scale = ensureScale(options.scale);
   if (scale <= 1.001) {
     onProgress?.(20, 'Ảnh nguồn đã đủ kích thước, đang chuẩn hóa đầu ra');
-    await writeRaster(sharp(inputPath, { failOn: 'none' }).rotate(), outputPath, options);
+    const normalized = await sharp(inputPath, { failOn: 'none' }).rotate().png().toBuffer();
+    await finishUpscale(normalized, outputPath, options, onProgress);
     onProgress?.(100, 'Hoàn tất');
     return outputPath;
   }
@@ -76,10 +103,7 @@ async function upscale({ settingsService, inputPath, outputPath, options, onProg
   if (options.useNcnn !== false) {
     let tempPng = null;
     try {
-      tempPng = path.extname(outputPath).toLowerCase() === '.png'
-        ? outputPath
-        : path.join(os.tmpdir(), `local-enhance-${Date.now()}-${Math.random().toString(16).slice(2)}.png`);
-
+      tempPng = path.join(os.tmpdir(), `local-enhance-${Date.now()}-${Math.random().toString(16).slice(2)}.png`);
       if (scale > 4) onProgress?.(2, `AI 4× + Lanczos đến ${Number(scale.toFixed(2))}×`);
       await runNcnnUpscale({
         settingsService,
@@ -89,18 +113,13 @@ async function upscale({ settingsService, inputPath, outputPath, options, onProg
         scale,
         onProgress
       });
-
-      if (tempPng !== outputPath) {
-        await writeRaster(sharp(tempPng, { failOn: 'none' }), outputPath, options);
-      }
+      await finishUpscale(tempPng, outputPath, options, onProgress);
       return outputPath;
     } catch (error) {
       if (!options.allowFallback) throw error;
       onProgress?.(8, `Bộ xử lý cục bộ không chạy: ${error.message}. Chuyển sang chế độ tương thích.`);
     } finally {
-      if (tempPng && tempPng !== outputPath) {
-        await fs.rm(tempPng, { force: true }).catch(() => {});
-      }
+      if (tempPng) await fs.rm(tempPng, { force: true }).catch(() => {});
     }
   }
   return upscaleFallback(inputPath, outputPath, scale, options, onProgress);
@@ -133,16 +152,20 @@ async function restoreSafe({ inputPath, outputPath, options, onProgress }) {
 async function textPrintSafe({ inputPath, outputPath, options, onProgress }) {
   const scale = ensureScale(options.scale);
   const size = await dimensions(inputPath, scale);
-  const edge = Math.max(0.2, Math.min(2.5, Number(options.edge ?? 1.2)));
-
   onProgress?.(15, 'Đang phân tích cạnh chữ');
-  const pipeline = sharp(inputPath, { failOn: 'none' })
+  const resized = await sharp(inputPath, { failOn: 'none' })
     .rotate()
     .resize(size.width, size.height, { kernel: sharp.kernel.lanczos3 })
-    .sharpen({ sigma: edge, m1: 1.0, m2: 2.5 })
-    .linear(1.035, -3);
+    .linear(1.02, -2)
+    .png({ compressionLevel: 4 })
+    .toBuffer();
 
-  await writeRaster(pipeline, outputPath, options);
+  await finishUpscale(resized, outputPath, {
+    ...options,
+    textPriority: true,
+    textStrength: options.textStrength ?? Math.max(0.35, Math.min(0.9, Number(options.edge ?? 1.2) * 0.48)),
+    haloLimit: options.haloLimit ?? 10
+  }, onProgress);
   onProgress?.(100, 'Hoàn tất');
   return outputPath;
 }
@@ -169,9 +192,7 @@ async function aiEnhance({ secureSecretsService, inputPath, outputPath, options,
 
     onProgress?.(82, 'Đã nhận ảnh, đang hoàn thiện đầu ra');
     let pipeline = sharp(result.buffer, { failOn: 'none' }).rotate();
-    if (options.finishSharpen !== false) {
-      pipeline = pipeline.sharpen({ sigma: 0.75, m1: 0.35, m2: 1.2 });
-    }
+    if (options.finishSharpen !== false) pipeline = pipeline.sharpen({ sigma: 0.75, m1: 0.35, m2: 1.2 });
     await writeRaster(pipeline, outputPath, options);
     onProgress?.(100, `Hoàn tất bằng ${result.provider === 'gemini' ? 'Gemini' : 'OpenAI'}`);
     return outputPath;
