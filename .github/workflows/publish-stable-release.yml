@@ -1,0 +1,135 @@
+name: Publish Stable Print Upscale Studio Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version without v prefix, for example 3.0.0
+        required: true
+        default: 3.0.0
+        type: string
+      source_ref:
+        description: Branch or commit containing the version to release
+        required: true
+        default: codex/production-upscale-quality-v14
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_VERSION: ${{ inputs.version }}
+  SOURCE_REF: ${{ inputs.source_ref }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_REF }}
+          fetch-depth: 0
+
+      - id: source
+        name: Resolve release source commit
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Verify requested version
+        shell: bash
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          test "$PACKAGE_VERSION" = "$RELEASE_VERSION" || {
+            echo "Requested version $RELEASE_VERSION does not match package.json $PACKAGE_VERSION"
+            exit 1
+          }
+          test ! -z "$RELEASE_VERSION"
+          test "$RELEASE_VERSION" != "2.9.4"
+
+      - run: npm run check
+
+  build-windows:
+    needs: validate
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Print-Upscale-Studio-${{ env.RELEASE_VERSION }}-windows-x64
+          path: |
+            dist/*.exe
+            dist/*.yml
+          if-no-files-found: error
+
+  build-macos:
+    needs: validate
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build macOS DMG
+        run: npm run dist:mac:${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Print-Upscale-Studio-${{ env.RELEASE_VERSION }}-macos-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  publish:
+    needs: [validate, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: find release-assets -maxdepth 2 -type f -print
+
+      - name: Create stable GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+        shell: bash
+        run: |
+          TAG="v${RELEASE_VERSION}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; uploading/replacing assets."
+            gh release upload "$TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$SOURCE_SHA" \
+              --title "Print Upscale Studio V${RELEASE_VERSION}" \
+              --generate-notes \
+              --latest
+          fi
