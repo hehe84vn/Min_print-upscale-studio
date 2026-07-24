@@ -20,6 +20,8 @@ permissions:
 env:
   RELEASE_VERSION: ${{ inputs.version }}
   SOURCE_REF: ${{ inputs.source_ref }}
+  AUTOTRACE_UPSTREAM_COMMIT: 74c796282474f33553265abbef4fc340b18c0593
+  HOMEBREW_NO_AUTO_UPDATE: 1
 
 jobs:
   validate:
@@ -32,19 +34,15 @@ jobs:
         with:
           ref: ${{ env.SOURCE_REF }}
           fetch-depth: 0
-
       - id: source
         name: Resolve release source commit
         shell: bash
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-
       - name: Verify requested version
         shell: bash
         run: |
@@ -53,14 +51,43 @@ jobs:
             echo "Requested version $RELEASE_VERSION does not match package.json $PACKAGE_VERSION"
             exit 1
           }
-          test ! -z "$RELEASE_VERSION"
+          test -n "$RELEASE_VERSION"
           test "$RELEASE_VERSION" != "2.9.4"
-
       - run: npm run check
 
-  build-windows:
+  prepare-autotrace-windows-runtime:
     needs: validate
+    runs-on: ubuntu-latest
+    container: fedora:43
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
+      - name: Install MinGW cross-build dependencies
+        run: |
+          sudo dnf update -y
+          sudo dnf install -y autoconf automake file findutils gettext-devel git glib2-devel intltool libtool make \
+            mingw64-binutils mingw64-filesystem mingw64-glib2 mingw64-libpng mingw64-gcc \
+            pkgconf-pkg-config which
+      - name: Cross-compile AutoTrace Windows x64 runtime
+        run: bash scripts/build-autotrace-windows-runtime.sh
+      - name: Verify Windows runtime
+        run: |
+          test -f vendor/autotrace/win32-x64/bin/autotrace.exe
+          test -f vendor/autotrace/win32-x64/bin/libgcc_s_seh-1.dll
+          test -f vendor/autotrace/win32-x64/bin/libwinpthread-1.dll
+          grep -q "$AUTOTRACE_UPSTREAM_COMMIT" vendor/autotrace/win32-x64/runtime.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autotrace-source-built-windows-x64
+          path: vendor/autotrace/win32-x64
+          if-no-files-found: error
+
+  build-windows:
+    needs: [validate, prepare-autotrace-windows-runtime]
     runs-on: windows-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with:
@@ -70,22 +97,28 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - run: npm run dist:win
+      - name: Download source-built AutoTrace Windows runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: autotrace-source-built-windows-x64
+          path: vendor/autotrace/win32-x64
+      - name: Verify bundled Windows runtime
+        run: npm run autotrace:smoke-runtime
+      - name: Build Windows installers
+        run: npm run dist:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
           name: Print-Upscale-Studio-${{ env.RELEASE_VERSION }}-windows-x64
-          path: |
-            dist/*.exe
-            dist/*.yml
+          path: release/*.exe
           if-no-files-found: error
 
-  build-macos:
+  build-macos-arm64:
     needs: validate
-    runs-on: macos-14
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x64, arm64]
+    runs-on: macos-15
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
         with:
@@ -95,26 +128,63 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Build macOS DMG
-        run: npm run dist:mac:${{ matrix.arch }}
+      - name: Install AutoTrace build source
+        run: brew install autotrace
+      - name: Bundle Apple Silicon AutoTrace runtime
+        run: npm run autotrace:prepare -- --platform darwin --arch arm64 --strict
+      - name: Verify bundled Apple Silicon runtime
+        run: npm run autotrace:smoke-runtime
+      - name: Build Apple Silicon DMG
+        run: npm run dist:mac:arm64
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
-          name: Print-Upscale-Studio-${{ env.RELEASE_VERSION }}-macos-${{ matrix.arch }}
-          path: dist/*.dmg
+          name: Print-Upscale-Studio-${{ env.RELEASE_VERSION }}-macos-arm64
+          path: release/*.dmg
+          if-no-files-found: error
+
+  build-macos-x64:
+    needs: validate
+    runs-on: macos-15-intel
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Install AutoTrace build source
+        run: brew install autotrace
+      - name: Bundle Intel AutoTrace runtime
+        run: npm run autotrace:prepare -- --platform darwin --arch x64 --strict
+      - name: Verify bundled Intel runtime
+        run: npm run autotrace:smoke-runtime
+      - name: Build Intel DMG
+        run: npm run dist:mac:x64
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Print-Upscale-Studio-${{ env.RELEASE_VERSION }}-macos-x64
+          path: release/*.dmg
           if-no-files-found: error
 
   publish:
-    needs: [validate, build-windows, build-macos]
+    needs: [validate, build-windows, build-macos-arm64, build-macos-x64]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
           merge-multiple: true
-
       - name: List release assets
         run: find release-assets -maxdepth 2 -type f -print
-
       - name: Create stable GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
