@@ -1,6 +1,10 @@
 'use strict';
 
+const fs = require('node:fs');
+const fsp = require('node:fs/promises');
 const https = require('node:https');
+const path = require('node:path');
+const crypto = require('node:crypto');
 
 const OWNER = 'hehe84vn';
 const REPOSITORY = 'Min_print-upscale-studio';
@@ -41,16 +45,12 @@ function requestJson(url, timeoutMs = 12000) {
       response.setEncoding('utf8');
       response.on('data', (chunk) => { raw += chunk; });
       response.on('end', () => {
-        if (response.statusCode === 404) {
-          resolve(null);
-          return;
-        }
+        if (response.statusCode === 404) return resolve(null);
         if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
-          reject(new Error(`GitHub Releases trả về HTTP ${response.statusCode || 'unknown'}.`));
-          return;
+          return reject(new Error(`GitHub Releases trả về HTTP ${response.statusCode || 'unknown'}.`));
         }
-        try { resolve(JSON.parse(raw)); }
-        catch { reject(new Error('Không đọc được dữ liệu cập nhật từ GitHub Releases.')); }
+        try { return resolve(JSON.parse(raw)); }
+        catch { return reject(new Error('Không đọc được dữ liệu cập nhật từ GitHub Releases.')); }
       });
     });
     request.setTimeout(timeoutMs, () => request.destroy(new Error('Kiểm tra cập nhật quá thời gian.')));
@@ -73,6 +73,84 @@ function assetForPlatform(release, platform, arch) {
       || null;
   }
   return null;
+}
+
+function safeAssetName(value) {
+  const name = path.basename(String(value || 'Print-Upscale-Studio-Update.exe'));
+  return name.replace(/[^a-zA-Z0-9._ -]+/g, '-').slice(0, 180);
+}
+
+function expectedSha256(asset) {
+  const digest = String(asset?.digest || '').trim();
+  const match = /^sha256:([a-f0-9]{64})$/i.exec(digest);
+  return match ? match[1].toLowerCase() : null;
+}
+
+function downloadResponse(url, options, redirects = 0) {
+  if (redirects > 6) return Promise.reject(new Error('GitHub chuyển hướng tải xuống quá nhiều lần.'));
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, {
+      headers: {
+        Accept: 'application/octet-stream',
+        'User-Agent': 'Print-Upscale-Studio-Update-Manager'
+      }
+    }, (response) => {
+      if ([301, 302, 303, 307, 308].includes(response.statusCode) && response.headers.location) {
+        response.resume();
+        const next = new URL(response.headers.location, url).toString();
+        downloadResponse(next, options, redirects + 1).then(resolve, reject);
+        return;
+      }
+      if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
+        response.resume();
+        reject(new Error(`Không tải được bộ cài: HTTP ${response.statusCode || 'unknown'}.`));
+        return;
+      }
+      resolve(response);
+    });
+    request.setTimeout(options.timeoutMs || 30000, () => request.destroy(new Error('Tải bộ cài quá thời gian.')));
+    request.on('error', reject);
+  });
+}
+
+async function downloadAsset({ asset, destinationDirectory, onProgress, timeoutMs = 30000 }) {
+  if (!asset?.downloadUrl || !/^https:\/\//i.test(asset.downloadUrl)) throw new Error('Release không có đường dẫn tải hợp lệ.');
+  await fsp.mkdir(destinationDirectory, { recursive: true });
+  const finalPath = path.join(destinationDirectory, safeAssetName(asset.name));
+  const partialPath = `${finalPath}.partial`;
+  await fsp.rm(partialPath, { force: true });
+
+  const response = await downloadResponse(asset.downloadUrl, { timeoutMs });
+  const total = Number(response.headers['content-length']) || Number(asset.size) || 0;
+  const hash = crypto.createHash('sha256');
+  let received = 0;
+  const output = fs.createWriteStream(partialPath, { flags: 'wx' });
+
+  try {
+    await new Promise((resolve, reject) => {
+      response.on('data', (chunk) => {
+        received += chunk.length;
+        hash.update(chunk);
+        onProgress?.({ received, total, percent: total ? Math.min(99, Math.round(received / total * 100)) : null });
+      });
+      response.on('error', reject);
+      output.on('error', reject);
+      output.on('finish', resolve);
+      response.pipe(output);
+    });
+
+    const actualSha256 = hash.digest('hex');
+    const expected = expectedSha256(asset);
+    if (expected && expected !== actualSha256) throw new Error('Checksum SHA-256 của bộ cài không khớp. Đã hủy cập nhật.');
+    await fsp.rm(finalPath, { force: true });
+    await fsp.rename(partialPath, finalPath);
+    onProgress?.({ received, total, percent: 100 });
+    return { filePath: finalPath, size: received, sha256: actualSha256, verified: Boolean(expected) };
+  } catch (error) {
+    output.destroy();
+    await fsp.rm(partialPath, { force: true });
+    throw error;
+  }
 }
 
 async function checkForUpdates({ currentVersion, platform = process.platform, arch = process.arch } = {}) {
@@ -104,6 +182,7 @@ async function checkForUpdates({ currentVersion, platform = process.platform, ar
     asset: asset ? {
       name: asset.name,
       size: asset.size,
+      digest: asset.digest || null,
       downloadUrl: asset.browser_download_url
     } : null,
     platform,
@@ -117,5 +196,8 @@ module.exports = {
   normalizeVersion,
   compareVersions,
   assetForPlatform,
+  safeAssetName,
+  expectedSha256,
+  downloadAsset,
   checkForUpdates
 };
