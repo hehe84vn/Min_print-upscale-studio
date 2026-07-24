@@ -33,7 +33,8 @@ function cubicFromPolyline(points) {
   const p1 = points[Math.min(points.length-1, 1)];
   const p2 = points[Math.max(0, points.length-2)];
   const chord = distance(start,end);
-  const handle = chord / 3;
+  const polylineLength = points.slice(1).reduce((sum, point, index) => sum + distance(points[index], point), 0);
+  const handle = Math.min(polylineLength * 0.42, chord * 0.55);
   const d1 = Math.max(1e-9, distance(start,p1));
   const d2 = Math.max(1e-9, distance(p2,end));
   return {
@@ -48,13 +49,33 @@ function evaluateCubic(s,t) {
   return {x:u*u*u*s.start.x+3*u*u*t*s.c1.x+3*u*t*t*s.c2.x+t*t*t*s.end.x,
     y:u*u*u*s.start.y+3*u*u*t*s.c1.y+3*u*t*t*s.c2.y+t*t*t*s.end.y};
 }
-function maxDeviation(points, cubic) {
-  let maximum=0;
+function deviationReport(points, cubic) {
+  let maximum=0; let index=0;
   for (let i=0;i<points.length;i+=1) {
     const t=i/Math.max(1,points.length-1);
-    maximum=Math.max(maximum,distance(points[i],evaluateCubic(cubic,t)));
+    const value=distance(points[i],evaluateCubic(cubic,t));
+    if(value>maximum){maximum=value;index=i;}
   }
-  return maximum;
+  return { maximum, index };
+}
+function fitChunk(points, tolerance, depth=0) {
+  if(points.length<4) {
+    const lines=[];
+    for(let i=1;i<points.length;i+=1) lines.push({type:'L',start:points[i-1],end:points[i]});
+    return {segments:lines,maximumDeviation:0};
+  }
+  const simplified=simplify(points,tolerance*0.3);
+  const cubic=cubicFromPolyline(simplified);
+  const report=deviationReport(points,cubic);
+  if(report.maximum<=tolerance) return {segments:[cubic],maximumDeviation:report.maximum};
+  if(depth>=8||report.index<=1||report.index>=points.length-2) return null;
+  const left=fitChunk(points.slice(0,report.index+1),tolerance,depth+1);
+  const right=fitChunk(points.slice(report.index),tolerance,depth+1);
+  if(!left||!right) return null;
+  return {
+    segments:[...left.segments,...right.segments],
+    maximumDeviation:Math.max(left.maximumDeviation,right.maximumDeviation)
+  };
 }
 function refitLongLineRuns(segments, options={}) {
   const minimumRun=Math.max(8, Number(options.minimumRun||12));
@@ -64,25 +85,24 @@ function refitLongLineRuns(segments, options={}) {
   let i=0;
   while(i<segments.length){
     if(segments[i].type!=='L'){out.push(segments[i]);i+=1;continue;}
-    const run=[]; const startIndex=i;
+    const run=[];
     while(i<segments.length&&segments[i].type==='L'){run.push(segments[i]);i+=1;}
     if(run.length<minimumRun){out.push(...run);continue;}
     const points=[run[0].start,...run.map(s=>s.end)];
     const splits=[0];
     for(let p=1;p<points.length-1;p+=1){if(angle(points[p-1],points[p],points[p+1])<180-cornerAngle)splits.push(p);}
     splits.push(points.length-1);
-    const replacement=[]; let safe=true;
+    const replacement=[]; let safe=true; let runDeviation=0;
     for(let s=0;s<splits.length-1;s+=1){
       const chunk=points.slice(splits[s],splits[s+1]+1);
-      if(chunk.length<4){for(let k=1;k<chunk.length;k+=1)replacement.push({type:'L',start:chunk[k-1],end:chunk[k]});continue;}
-      const simplified=simplify(chunk,tolerance*0.35);
-      const cubic=cubicFromPolyline(simplified);
-      const deviation=maxDeviation(chunk,cubic);
-      if(deviation>tolerance){safe=false;break;}
-      maximumDeviation=Math.max(maximumDeviation,deviation); replacement.push(cubic);
+      const fitted=fitChunk(chunk,tolerance);
+      if(!fitted){safe=false;break;}
+      replacement.push(...fitted.segments);
+      runDeviation=Math.max(runDeviation,fitted.maximumDeviation);
     }
     if(!safe||replacement.length>=run.length){out.push(...run);continue;}
     out.push(...replacement); runsRefit+=1; linesReplaced+=run.length-replacement.length;
+    maximumDeviation=Math.max(maximumDeviation,runDeviation);
   }
   return {segments:out,stats:{runsRefit,linesReplaced,maximumDeviation:Number(maximumDeviation.toFixed(4))}};
 }
