@@ -16,11 +16,18 @@ function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
 function safeName(value) { return String(value || 'preview').replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 60); }
 
 function normalizeCrop(crop, width, height) {
-  const x = clamp(Math.round(Number(crop?.x) || 0), 0, Math.max(0, width - 1));
-  const y = clamp(Math.round(Number(crop?.y) || 0), 0, Math.max(0, height - 1));
-  const w = clamp(Math.round(Number(crop?.width) || 0), 64, width - x);
-  const h = clamp(Math.round(Number(crop?.height) || 0), 64, height - y);
-  if (w < 64 || h < 64) throw new Error('Vùng crop phải tối thiểu 64 × 64 px.');
+  const safeWidth = Math.round(Number(width) || 0);
+  const safeHeight = Math.round(Number(height) || 0);
+  if (safeWidth < 64 || safeHeight < 64) throw new Error('Ảnh phải tối thiểu 64 × 64 px để crop.');
+
+  const requestedWidth = Math.round(Number(crop?.width) || 0);
+  const requestedHeight = Math.round(Number(crop?.height) || 0);
+  if (requestedWidth < 64 || requestedHeight < 64) throw new Error('Vùng crop phải tối thiểu 64 × 64 px.');
+
+  const x = clamp(Math.round(Number(crop?.x) || 0), 0, safeWidth - 64);
+  const y = clamp(Math.round(Number(crop?.y) || 0), 0, safeHeight - 64);
+  const w = clamp(requestedWidth, 64, safeWidth - x);
+  const h = clamp(requestedHeight, 64, safeHeight - y);
   return { x, y, width: w, height: h };
 }
 
