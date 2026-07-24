@@ -35,43 +35,47 @@ function registerUpdateManagerIpc() {
 
   ipcMain.handle('update:check', async () => {
     if (!pendingCheck) {
-      pendingCheck = checkForUpdates({
-        currentVersion: app.getVersion(),
-        platform: process.platform,
-        arch: process.arch
-      }).finally(() => { pendingCheck = null; });
+      pendingCheck = checkForUpdates({ currentVersion: app.getVersion(), platform: process.platform, arch: process.arch })
+        .finally(() => { pendingCheck = null; });
     }
     return pendingCheck;
   });
 
   ipcMain.handle('update:install', async (_event, payload = {}) => {
     assertInstallAllowed(payload);
-    if (process.platform !== 'win32') {
-      const target = payload.releaseUrl || RELEASES_URL;
-      await shell.openExternal(target);
-      return { openedReleasePage: true, platform: process.platform };
-    }
     if (pendingInstall) return pendingInstall;
 
     pendingInstall = (async () => {
       const latest = await checkForUpdates({ currentVersion: app.getVersion(), platform: process.platform, arch: process.arch });
-      if (!latest.updateAvailable) throw new Error('Không có phiên bản mới hơn để cài đặt.');
-      if (!latest.asset?.downloadUrl) throw new Error('Release chưa có bộ cài Windows phù hợp.');
+      if (!latest.updateAvailable) throw new Error('Không có phiên bản mới hơn để tải.');
+      if (!latest.asset?.downloadUrl) throw new Error('Release chưa có bộ cài phù hợp cho máy này.');
       broadcast('update:progress', { phase: 'downloading', percent: 0, message: `Đang tải ${latest.asset.name}` });
       const downloaded = await downloadAsset({
         asset: latest.asset,
-        destinationDirectory: path.join(app.getPath('temp'), 'print-upscale-studio-updates'),
+        destinationDirectory: path.join(app.getPath('downloads'), 'Print Upscale Studio Updates'),
         onProgress: (progress) => broadcast('update:progress', {
           phase: 'downloading',
           ...progress,
-          message: progress.percent == null ? 'Đang tải bộ cài...' : `Đang tải bộ cài ${progress.percent}%`
+          message: progress.percent == null ? 'Đang tải bản cập nhật...' : `Đang tải bản cập nhật ${progress.percent}%`
         })
       });
       assertInstallAllowed(payload);
-      broadcast('update:progress', { phase: 'launching', percent: 100, message: 'Đang mở bộ cài và đóng ứng dụng...' });
-      await launchWindowsInstaller(downloaded.filePath);
-      setTimeout(() => app.quit(), 450);
-      return { launched: true, latestVersion: latest.latestVersion, ...downloaded };
+
+      if (process.platform === 'win32') {
+        broadcast('update:progress', { phase: 'launching', percent: 100, message: 'Đang mở bộ cài và đóng ứng dụng...' });
+        await launchWindowsInstaller(downloaded.filePath);
+        setTimeout(() => app.quit(), 450);
+        return { launched: true, latestVersion: latest.latestVersion, ...downloaded };
+      }
+
+      if (process.platform === 'darwin') {
+        broadcast('update:progress', { phase: 'downloaded', percent: 100, message: 'Đã tải DMG. Hãy mở file và cài đè ứng dụng.' });
+        const openError = await shell.openPath(downloaded.filePath);
+        return { downloaded: true, opened: !openError, openError: openError || null, latestVersion: latest.latestVersion, ...downloaded };
+      }
+
+      await shell.showItemInFolder(downloaded.filePath);
+      return { downloaded: true, latestVersion: latest.latestVersion, ...downloaded };
     })().finally(() => { pendingInstall = null; });
 
     return pendingInstall;
