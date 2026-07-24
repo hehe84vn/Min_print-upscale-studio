@@ -19,11 +19,9 @@ function normalizeCrop(crop, width, height) {
   const safeWidth = Math.round(Number(width) || 0);
   const safeHeight = Math.round(Number(height) || 0);
   if (safeWidth < 64 || safeHeight < 64) throw new Error('Ảnh phải tối thiểu 64 × 64 px để crop.');
-
   const requestedWidth = Math.round(Number(crop?.width) || 0);
   const requestedHeight = Math.round(Number(crop?.height) || 0);
   if (requestedWidth < 64 || requestedHeight < 64) throw new Error('Vùng crop phải tối thiểu 64 × 64 px.');
-
   const x = clamp(Math.round(Number(crop?.x) || 0), 0, safeWidth - 64);
   const y = clamp(Math.round(Number(crop?.y) || 0), 0, safeHeight - 64);
   const w = clamp(requestedWidth, 64, safeWidth - x);
@@ -34,50 +32,70 @@ function normalizeCrop(crop, width, height) {
 async function tileScore(inputPath, rect) {
   const { data, info } = await sharp(inputPath, { failOn: 'none' })
     .extract({ left: rect.x, top: rect.y, width: rect.width, height: rect.height })
-    .resize(192, 192, { fit: 'fill' })
+    .resize(224, 224, { fit: 'fill' })
     .removeAlpha().raw().toBuffer({ resolveWithObject: true });
-  let edge = 0;
-  let color = 0;
-  let variance = 0;
-  let mean = 0;
   const pixels = info.width * info.height;
   const gray = new Float32Array(pixels);
+  let mean = 0; let color = 0; let dark = 0; let light = 0;
   for (let i = 0; i < pixels; i += 1) {
     const r = data[i * 3]; const g = data[i * 3 + 1]; const b = data[i * 3 + 2];
     const value = r * 0.299 + g * 0.587 + b * 0.114;
     gray[i] = value; mean += value;
     color += Math.max(r, g, b) - Math.min(r, g, b);
+    if (value < 55) dark += 1;
+    if (value > 200) light += 1;
   }
   mean /= pixels;
+  let edge = 0; let fineEdge = 0; let variance = 0;
   for (let y = 1; y < info.height; y += 1) for (let x = 1; x < info.width; x += 1) {
     const i = y * info.width + x;
-    edge += Math.abs(gray[i] - gray[i - 1]) + Math.abs(gray[i] - gray[i - info.width]);
+    const local = Math.abs(gray[i] - gray[i - 1]) + Math.abs(gray[i] - gray[i - info.width]);
+    edge += local;
+    if (local > 42) fineEdge += 1;
     const d = gray[i] - mean; variance += d * d;
   }
-  return { ...rect, edge: edge / pixels, color: color / pixels, variance: variance / pixels };
+  const contrastMix = Math.min(dark, light) / pixels;
+  return {
+    ...rect,
+    edge: edge / pixels,
+    fineEdge: fineEdge / pixels,
+    color: color / pixels,
+    variance: variance / pixels,
+    contrastMix
+  };
 }
 
-async function selectAutoCrops(inputPath, count = 3) {
+function regionReason(item) {
+  if (item.fineEdge > 0.18 && item.contrastMix > 0.08) return 'Vùng có chữ nhỏ hoặc đường biên tương phản cao';
+  if (item.color > 34 && item.edge > 18) return 'Vùng có logo, màu phẳng và đường biên rõ';
+  if (Math.sqrt(item.variance) > 58) return 'Vùng có texture và chi tiết ảnh phức tạp';
+  return 'Vùng có mật độ chi tiết cao nhất trong artwork';
+}
+
+async function selectSmartTestRegion(inputPath) {
   const meta = await sharp(inputPath, { failOn: 'none' }).metadata();
   const width = meta.width || 0; const height = meta.height || 0;
-  if (width < 128 || height < 128) throw new Error('Ảnh quá nhỏ để chạy Preview Crop.');
-  const cropW = Math.min(width, Math.max(256, Math.round(width * 0.34)));
-  const cropH = Math.min(height, Math.max(256, Math.round(height * 0.34)));
+  if (width < 128 || height < 128) throw new Error('Ảnh quá nhỏ để chạy Smart Test Region.');
+  const target = Math.min(768, Math.max(320, Math.round(Math.min(width, height) * 0.42)));
+  const cropW = Math.min(width, target);
+  const cropH = Math.min(height, target);
   const candidates = [];
-  for (let gy = 0; gy < 3; gy += 1) for (let gx = 0; gx < 3; gx += 1) {
-    const x = Math.round((width - cropW) * gx / 2);
-    const y = Math.round((height - cropH) * gy / 2);
+  for (let gy = 0; gy < 5; gy += 1) for (let gx = 0; gx < 5; gx += 1) {
+    const x = Math.round((width - cropW) * gx / 4);
+    const y = Math.round((height - cropH) * gy / 4);
     candidates.push(await tileScore(inputPath, { x, y, width: cropW, height: cropH }));
   }
-  candidates.forEach((item) => { item.score = item.edge * 2.1 + Math.sqrt(item.variance) * 0.75 + item.color * 0.22; });
+  candidates.forEach((item) => {
+    item.score = item.edge * 2.4 + item.fineEdge * 115 + Math.sqrt(item.variance) * 0.72 + item.color * 0.16 + item.contrastMix * 80;
+  });
   candidates.sort((a, b) => b.score - a.score);
-  const chosen = [];
-  for (const item of candidates) {
-    const farEnough = chosen.every((other) => Math.hypot(item.x - other.x, item.y - other.y) > Math.min(cropW, cropH) * 0.55);
-    if (farEnough) chosen.push(item);
-    if (chosen.length >= count) break;
-  }
-  return chosen.map(({ x, y, width: w, height: h }, index) => ({ id: `auto-${index + 1}`, label: `Vùng tự động ${index + 1}`, x, y, width: w, height: h }));
+  const best = candidates[0];
+  return {
+    id: 'smart-region-1',
+    label: 'Vùng đại diện AI',
+    reason: regionReason(best),
+    x: best.x, y: best.y, width: best.width, height: best.height
+  };
 }
 
 async function imageMetrics(filePath) {
@@ -112,42 +130,50 @@ function qualityScore(source, output) {
 async function runPreview({ settingsService, inputPath, crops = null, models = [], scale = 2, onProgress }) {
   if (!inputPath) throw new Error('Chưa chọn ảnh nguồn.');
   const meta = await sharp(inputPath, { failOn: 'none' }).metadata();
-  const selectedCrops = Array.isArray(crops) && crops.length
-    ? crops.map((crop, index) => ({ id: crop.id || `manual-${index + 1}`, label: crop.label || `Vùng thủ công ${index + 1}`, ...normalizeCrop(crop, meta.width, meta.height) }))
-    : await selectAutoCrops(inputPath, 3);
+  const crop = Array.isArray(crops) && crops.length
+    ? { id: crops[0].id || 'manual-1', label: crops[0].label || 'Vùng thủ công', reason: 'Vùng do người dùng chọn', ...normalizeCrop(crops[0], meta.width, meta.height) }
+    : await selectSmartTestRegion(inputPath);
   const selectedModels = [...new Set(models)].filter((model) => MODEL_LABELS[model]).slice(0, 3);
   if (!selectedModels.length) selectedModels.push('high-fidelity-4x', 'remacri-4x', 'realesrgan-x4plus');
-  const outputDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'print-upscale-preview-v15-'));
+  const outputDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'print-upscale-smart-region-v17-'));
+  const cropPath = path.join(outputDirectory, `${safeName(crop.id)}-source.png`);
+  await sharp(inputPath, { failOn: 'none' }).extract({ left: crop.x, top: crop.y, width: crop.width, height: crop.height }).png().toFile(cropPath);
+  const sourceMetrics = await imageMetrics(cropPath);
   const results = [];
-  let step = 0; const total = selectedCrops.length * selectedModels.length;
-  for (const crop of selectedCrops) {
-    const cropPath = path.join(outputDirectory, `${safeName(crop.id)}-source.png`);
-    await sharp(inputPath, { failOn: 'none' }).extract({ left: crop.x, top: crop.y, width: crop.width, height: crop.height }).png().toFile(cropPath);
-    const sourceMetrics = await imageMetrics(cropPath);
-    for (const model of selectedModels) {
-      step += 1;
-      onProgress?.(Math.round(step / total * 92), `Preview ${crop.label}: ${MODEL_LABELS[model]}`);
-      const outputPath = path.join(outputDirectory, `${safeName(crop.id)}-${safeName(model)}-${scale}x.png`);
-      const started = Date.now();
-      try {
-        await runNcnnUpscale({ settingsService, inputPath: cropPath, outputPath, model, scale, onProgress: () => {} });
-        const metrics = qualityScore(sourceMetrics, await imageMetrics(outputPath));
-        results.push({ cropId: crop.id, cropLabel: crop.label, model, modelLabel: MODEL_LABELS[model], sourcePath: cropPath, outputPath, durationMs: Date.now() - started, metrics, error: null });
-      } catch (error) {
-        results.push({ cropId: crop.id, cropLabel: crop.label, model, modelLabel: MODEL_LABELS[model], sourcePath: cropPath, outputPath: null, durationMs: Date.now() - started, metrics: null, error: error.message || String(error) });
-      }
+  for (let index = 0; index < selectedModels.length; index += 1) {
+    const model = selectedModels[index];
+    onProgress?.(Math.round((index + 1) / selectedModels.length * 92), `Đang test ${MODEL_LABELS[model]}`);
+    const outputPath = path.join(outputDirectory, `${safeName(crop.id)}-${safeName(model)}-${scale}x.png`);
+    const started = Date.now();
+    try {
+      await runNcnnUpscale({ settingsService, inputPath: cropPath, outputPath, model, scale, onProgress: () => {} });
+      const metrics = qualityScore(sourceMetrics, await imageMetrics(outputPath));
+      results.push({ cropId: crop.id, cropLabel: crop.label, model, modelLabel: MODEL_LABELS[model], sourcePath: cropPath, outputPath, durationMs: Date.now() - started, metrics, error: null });
+    } catch (error) {
+      results.push({ cropId: crop.id, cropLabel: crop.label, model, modelLabel: MODEL_LABELS[model], sourcePath: cropPath, outputPath: null, durationMs: Date.now() - started, metrics: null, error: error.message || String(error) });
     }
   }
-  const ranking = selectedModels.map((model) => {
-    const valid = results.filter((item) => item.model === model && item.metrics);
-    const score = valid.length ? Math.round(valid.reduce((sum, item) => sum + item.metrics.score, 0) / valid.length) : 0;
-    const risk = valid.some((item) => item.metrics.haloRisk > 12 || item.metrics.edgeDrift > 0.8);
-    return { model, label: MODEL_LABELS[model], score, risk, samples: valid.length };
-  }).sort((a, b) => b.score - a.score);
+  const ranking = results.map((item) => ({
+    model: item.model,
+    label: item.modelLabel,
+    score: item.metrics?.score || 0,
+    risk: Boolean(item.metrics && (item.metrics.haloRisk > 12 || item.metrics.edgeDrift > 0.8)),
+    samples: item.metrics ? 1 : 0
+  })).sort((a, b) => b.score - a.score);
   const best = ranking[0];
-  const hybridRecommended = ranking.length > 1 && Math.abs(ranking[0].score - ranking[1].score) <= 4 && ranking[0].score >= 66;
-  onProgress?.(100, 'Preview Crop và chấm điểm hoàn tất');
-  return { outputDirectory, crops: selectedCrops, results, ranking, bestModel: best?.model || null, bestScore: best?.score || 0, hybridRecommended, fullImagePreset: hybridRecommended ? 'packaging-hybrid' : ({ 'high-fidelity-4x': 'current-photo', 'remacri-4x': 'current-packaging', 'realesrgan-x4plus': 'official-detail' }[best?.model] || 'current-photo') };
+  const hybridRecommended = ranking.length > 1 && Math.abs(ranking[0].score - ranking[1].score) <= 3 && ranking[0].score >= 70;
+  onProgress?.(100, 'Smart Test Region hoàn tất');
+  return {
+    outputDirectory,
+    crops: [crop],
+    smartRegion: crop,
+    results,
+    ranking,
+    bestModel: best?.model || null,
+    bestScore: best?.score || 0,
+    hybridRecommended,
+    fullImagePreset: hybridRecommended ? 'packaging-hybrid' : ({ 'high-fidelity-4x': 'current-photo', 'remacri-4x': 'current-packaging', 'realesrgan-x4plus': 'official-detail' }[best?.model] || 'current-photo')
+  };
 }
 
-module.exports = { normalizeCrop, selectAutoCrops, qualityScore, runPreview };
+module.exports = { normalizeCrop, selectSmartTestRegion, qualityScore, runPreview };
