@@ -18,6 +18,7 @@
     .then(() => loadScript('vector-engine-comparison-ui.js'))
     .then(() => loadScript('version-ui.js'))
     .then(() => loadScript('navigation-structure-safe.js'))
+    .then(() => loadScript('model-studio-v15-ui.js'))
     .then(() => loadScript('license-ui.js'))
     .catch((error) => console.error('Renderer extension loader:', error));
 })();
