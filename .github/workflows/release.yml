@@ -4,13 +4,29 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version without v prefix, for example 3.0.0'
+        required: true
+        type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: print-upscale-release-${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,12 +34,15 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Verify tag matches package version
+      - name: Resolve and verify release version
+        id: version
         shell: bash
         run: |
           PACKAGE_VERSION=$(node -p "require('./package.json').version")
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          test "$PACKAGE_VERSION" = "$TAG_VERSION" || { echo "Tag $TAG_VERSION does not match package $PACKAGE_VERSION"; exit 1; }
+          REQUESTED_VERSION="${RELEASE_VERSION#v}"
+          test "$PACKAGE_VERSION" = "$REQUESTED_VERSION" || { echo "Requested version $REQUESTED_VERSION does not match package $PACKAGE_VERSION"; exit 1; }
+          echo "version=$REQUESTED_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$REQUESTED_VERSION" >> "$GITHUB_OUTPUT"
       - run: npm run check
 
   build-windows:
@@ -39,11 +58,12 @@ jobs:
       - run: npm run dist:win
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-x64
+          name: print-upscale-studio-v${{ needs.validate.outputs.version }}-windows-x64
           path: |
             dist/*.exe
             dist/*.yml
           if-no-files-found: error
+          retention-days: 14
 
   build-macos:
     needs: validate
@@ -63,23 +83,30 @@ jobs:
         run: npm run dist:mac:${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-${{ matrix.arch }}
+          name: print-upscale-studio-v${{ needs.validate.outputs.version }}-macos-${{ matrix.arch }}
           path: dist/*.dmg
           if-no-files-found: error
+          retention-days: 14
 
   publish:
-    needs: [build-windows, build-macos]
+    needs: [validate, build-windows, build-macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
           merge-multiple: true
+      - name: List release assets
+        run: find release-assets -maxdepth 2 -type f -print
       - name: Create stable GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.validate.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Print Upscale Studio V${{ needs.validate.outputs.version }}
           files: release-assets/*
           generate_release_notes: true
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
+          make_latest: true
