@@ -19,6 +19,7 @@
     .then(() => loadScript('version-ui.js'))
     .then(() => loadScript('navigation-structure-safe.js'))
     .then(() => loadScript('model-studio-v15-ui.js'))
+    .then(() => loadScript('cmyk-opt-in-v15-1.js'))
     .then(() => loadScript('license-ui.js'))
     .catch((error) => console.error('Renderer extension loader:', error));
 })();
