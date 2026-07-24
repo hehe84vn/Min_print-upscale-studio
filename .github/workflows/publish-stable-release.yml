@@ -41,9 +41,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
-      - run: npm ci
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
 
       - name: Verify requested version
         shell: bash
@@ -68,8 +68,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
       - run: npm run dist:win
       - uses: actions/upload-artifact@v4
         with:
@@ -93,8 +93,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
       - name: Build macOS DMG
         run: npm run dist:mac:${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
