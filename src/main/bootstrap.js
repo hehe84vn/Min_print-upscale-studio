@@ -103,4 +103,5 @@ app.whenReady().then(async () => {
 });
 
 require('./modelStudioV15Ipc');
+require('./updateManagerIpc');
 require('./main');
