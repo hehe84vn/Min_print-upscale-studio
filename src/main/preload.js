@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('studio', {
   getProductionStatus: () => ipcRenderer.invoke('production:status'),
   getBenchmarkPresets: () => ipcRenderer.invoke('benchmark:presets'),
   runBenchmark: (payload) => ipcRenderer.invoke('benchmark:run', payload),
+  runModelStudioPreview: (payload) => ipcRenderer.invoke('model-studio:preview', payload),
   getColorSettings: () => ipcRenderer.invoke('color:settings:get'),
   saveColorSettings: (payload) => ipcRenderer.invoke('color:settings:save', payload),
   selectIccProfile: () => ipcRenderer.invoke('color:select-profile'),
