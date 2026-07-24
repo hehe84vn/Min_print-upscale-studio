@@ -15,35 +15,40 @@
     const style = document.createElement('style');
     style.id = 'modelStudioV15SuiteStyles';
     style.textContent = `
-      .v15-suite-card{border:1px solid #3e5269;border-radius:13px;background:#111923;padding:12px;margin:12px 0;display:grid;gap:10px}
-      .v15-suite-head{display:flex;justify-content:space-between;gap:8px;align-items:center}.v15-suite-head h3{margin:0;font-size:13px}.v15-suite-head small{color:#8492a3}
-      .v15-suite-actions{display:grid;grid-template-columns:1fr auto;gap:7px}.v15-suite-actions button{font-size:9px;padding:8px}.v15-suite-actions .secondary{opacity:.82}
-      .v15-crop-state{font-size:9px;color:#96a3b3;line-height:1.45;padding:8px;border-radius:8px;background:#0d141d}
-      .v15-region-meta{display:flex;gap:7px;flex-wrap:wrap}.v15-region-chip{background:#0d131a;border-radius:7px;padding:6px 8px;font-size:8px;color:#9eabb9}
-      .v15-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.v15-compare-card{border:1px solid #2e3a47;border-radius:10px;padding:7px;background:#151c24;display:grid;gap:6px;min-width:0}.v15-compare-card.best{border-color:#73b7ff}.v15-compare-card img{width:100%;aspect-ratio:1/1;object-fit:contain;background:#090e14;border-radius:7px}.v15-compare-card strong{font-size:9px}.v15-compare-card small{font-size:8px;color:#8996a6}.v15-score{font-size:14px;font-weight:900;color:#73b7ff;float:right}
-      .v15-full-action{display:grid;gap:6px}.v15-full-action button{width:100%}.v15-warning{color:#ffca7a;font-size:9px;line-height:1.4}
+      .v15-suite-card{border:1px solid #3e5269;border-radius:15px;background:#111923;padding:16px;margin:14px 0;display:grid;gap:12px}
+      .v15-suite-card[hidden]{display:none}
+      .v15-suite-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.v15-suite-head h3{margin:2px 0 0;font-size:16px}.v15-suite-head small{color:#8492a3}.v15-suite-head>span{white-space:nowrap;color:#a8ff34;font-size:10px;font-weight:800}
+      .v15-suite-toolbar{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(220px,.55fr);gap:10px;align-items:stretch}
+      .v15-suite-actions{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}.v15-suite-actions button{font-size:10px;padding:10px 13px}.v15-suite-actions .secondary{opacity:.86}
+      .v15-crop-state{font-size:10px;color:#a0adbc;line-height:1.5;padding:10px 12px;border-radius:9px;background:#0d141d}
+      .v15-region-meta{display:flex;gap:7px;flex-wrap:wrap;align-content:flex-start}.v15-region-chip{background:#0d131a;border-radius:8px;padding:7px 9px;font-size:8px;color:#9eabb9}
+      .v15-comparison{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.v15-compare-card{border:1px solid #2e3a47;border-radius:11px;padding:8px;background:#151c24;display:grid;gap:7px;min-width:0}.v15-compare-card.best{border-color:#73b7ff;box-shadow:0 0 0 1px rgba(115,183,255,.12)}.v15-compare-card img{width:100%;aspect-ratio:4/3;object-fit:contain;background:#090e14;border-radius:8px}.v15-compare-card strong{font-size:10px}.v15-compare-card small{font-size:8px;color:#8996a6;line-height:1.35}.v15-score{font-size:15px;font-weight:900;color:#73b7ff;float:right}
+      .v15-full-action{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,.42fr);gap:10px;align-items:stretch}.v15-full-action button{width:100%;min-height:44px}.v15-warning{color:#ffca7a;font-size:9px;line-height:1.4}
       .v15-crop-overlay{position:absolute;border:2px solid #73b7ff;background:rgba(115,183,255,.12);pointer-events:none;z-index:8}.v15-crop-overlay.smart{border-color:#a9ff2c;background:rgba(169,255,44,.11)}.v15-manual-active{cursor:crosshair!important}
-      @media(max-width:520px){.v15-comparison{grid-template-columns:1fr}.v15-suite-actions{grid-template-columns:1fr}}
+      @media(max-width:1220px){.v15-comparison{grid-template-columns:repeat(2,minmax(0,1fr))}.v15-suite-toolbar,.v15-full-action{grid-template-columns:1fr}}
+      @media(max-width:760px){.v15-comparison,.v15-suite-actions{grid-template-columns:1fr}}
     `;
     document.head.append(style);
   }
 
   function installCard() {
-    const settings = $('benchmarkSettings');
-    if (!settings || $('modelStudioV15SuiteCard')) return;
-    const intelligence = $('modelIntelligenceCard');
+    const previewColumn = document.querySelector('.preview-column');
+    const inspector = $('inspectorCard');
+    if (!previewColumn || $('modelStudioV15SuiteCard')) return;
     const card = document.createElement('section');
     card.id = 'modelStudioV15SuiteCard';
     card.className = 'v15-suite-card';
     card.innerHTML = `
       <div class="v15-suite-head"><div><small>MODEL STUDIO V17 · SMART TEST REGION</small><h3>Test một vùng đại diện trước khi chạy toàn ảnh</h3></div><span id="v15PreviewBadge">Sẵn sàng</span></div>
-      <div class="v15-suite-actions"><button id="v15AutoPreviewBtn" class="primary" type="button">Phân tích và test vùng đại diện</button><button id="v15ManualCropBtn" class="secondary" type="button">Chọn vùng khác</button></div>
+      <div class="v15-suite-toolbar">
+        <div class="v15-suite-actions"><button id="v15AutoPreviewBtn" class="primary" type="button">Phân tích và test vùng đại diện</button><button id="v15ManualCropBtn" class="secondary" type="button">Chọn vùng khác</button></div>
+        <div id="v15RegionMeta" class="v15-region-meta"></div>
+      </div>
       <div id="v15CropState" class="v15-crop-state">AI sẽ quét artwork, chọn một vùng khó và chạy ba model trên đúng vùng đó.</div>
-      <div id="v15RegionMeta" class="v15-region-meta"></div>
       <div id="v15PreviewResults" class="v15-comparison"></div>
       <div id="v15FullAction" class="v15-full-action" hidden><div id="v15BestReason" class="v15-crop-state"></div><button id="v15UseBestBtn" class="primary" type="button">Áp dụng model tốt nhất cho toàn ảnh</button></div>
     `;
-    (intelligence || settings.firstElementChild)?.insertAdjacentElement('afterend', card);
+    (inspector || previewColumn.firstElementChild)?.insertAdjacentElement('afterend', card);
     $('v15AutoPreviewBtn').addEventListener('click', () => runPreview(null));
     $('v15ManualCropBtn').addEventListener('click', toggleManualCrop);
     $('v15UseBestBtn').addEventListener('click', applyBestToFullImage);
@@ -155,7 +160,7 @@
     const preset = lastPreview.fullImagePreset || MODEL_PRESETS[lastPreview.bestModel] || 'current-photo';
     document.querySelectorAll('.benchmark-preset').forEach((input) => { input.checked = input.value === preset; });
     if ($('miStatus')) $('miStatus').textContent = `Đã chọn ${lastPreview.hybridRecommended ? 'Packaging Hybrid' : lastPreview.ranking[0]?.label}. Bấm Chạy Model Lab để xử lý toàn ảnh.`;
-    $('v15CropState').textContent = 'Đã áp dụng lựa chọn. Bước tiếp theo: bấm Chạy Model Lab để xử lý toàn bộ artwork.';
+    $('v15CropState').textContent = 'Đã áp dụng lựa chọn. Bước tiếp theo: bấm Chạy Model Lab ở cột bên phải để xử lý toàn bộ artwork.';
     $('runBtn')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
