@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('studio', {
   runBenchmark: (payload) => ipcRenderer.invoke('benchmark:run', payload),
   runModelStudioPreview: (payload) => ipcRenderer.invoke('model-studio:preview', payload),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  installUpdate: (payload) => ipcRenderer.invoke('update:install', payload),
   openUpdateRelease: (url) => ipcRenderer.invoke('update:open-release', url),
   getColorSettings: () => ipcRenderer.invoke('color:settings:get'),
   saveColorSettings: (payload) => ipcRenderer.invoke('color:settings:save', payload),
@@ -49,6 +50,11 @@ contextBridge.exposeInMainWorld('studio', {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('job:progress', listener);
     return () => ipcRenderer.removeListener('job:progress', listener);
+  },
+  onUpdateProgress: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('update:progress', listener);
+    return () => ipcRenderer.removeListener('update:progress', listener);
   },
   onProductionStatus: (callback) => {
     const listener = (_event, value) => callback(value);
