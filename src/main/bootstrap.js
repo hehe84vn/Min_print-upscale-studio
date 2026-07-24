@@ -9,6 +9,7 @@ const PROTECTED_CHANNELS = new Set([
   'image:process',
   'production:start',
   'benchmark:run',
+  'model-studio:preview',
   'color:convert'
 ]);
 
@@ -101,4 +102,5 @@ app.whenReady().then(async () => {
   }
 });
 
+require('./modelStudioV15Ipc');
 require('./main');
