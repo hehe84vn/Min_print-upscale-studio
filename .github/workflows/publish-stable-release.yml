@@ -184,7 +184,7 @@ jobs:
           path: release-assets
           merge-multiple: true
       - name: List release assets
-        run: find release-assets -maxdepth 2 -type f -print
+        run: find release-assets -type f -print
       - name: Create stable GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -192,11 +192,14 @@ jobs:
         shell: bash
         run: |
           TAG="v${RELEASE_VERSION}"
+          mapfile -d '' ASSETS < <(find release-assets -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.yml' \) -print0)
+          test "${#ASSETS[@]}" -gt 0 || { echo "No release assets found"; exit 1; }
+          printf 'Uploading release asset: %s\n' "${ASSETS[@]}"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $TAG already exists; uploading/replacing assets."
-            gh release upload "$TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" "${ASSETS[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" release-assets/* \
+            gh release create "$TAG" "${ASSETS[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$SOURCE_SHA" \
               --title "Print Upscale Studio V${RELEASE_VERSION}" \
