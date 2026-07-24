@@ -7,6 +7,11 @@ const {
   serializePathData
 } = require('./vectorGeometryLock');
 const { optimizeBezierSegments } = require('./vectorBezierOptimizer');
+const {
+  adaptiveFittingOptions,
+  analyzeAdaptivePath,
+  fitEllipseIfEligible
+} = require('./vectorAdaptiveFittingService');
 
 function clamp(value, minimum, maximum, fallback) {
   const number = Number(value);
@@ -141,6 +146,7 @@ function cleanupVectorSvg(svg, options = {}) {
   const maximum = Math.max(size.width, size.height, 1);
   const profile = ['precise', 'balanced', 'smooth'].includes(options.profile) ? options.profile : 'balanced';
   const profileFactor = profile === 'precise' ? 0.55 : profile === 'smooth' ? 1.65 : 1;
+  const adaptiveFitting = options.adaptiveFitting !== false;
   const lineTolerance = clamp(options.lineTolerance, 0.01, maximum * 0.02, maximum * 0.00065 * profileFactor);
   const microSegmentThreshold = clamp(options.microSegmentThreshold, 0, maximum * 0.01, maximum * 0.00012 * profileFactor);
   const closeTolerance = clamp(options.closeTolerance, 0, maximum * 0.02, maximum * 0.00045 * profileFactor);
@@ -148,21 +154,12 @@ function cleanupVectorSvg(svg, options = {}) {
   const minimumPathLength = clamp(options.minimumPathLength, 0, maximum, maximum * 0.0018 * profileFactor);
   const bezierErrorTolerance = clamp(options.bezierErrorTolerance, 0.01, maximum * 0.01, maximum * 0.00035 * profileFactor);
   const precision = Math.round(clamp(options.pathPrecision, 1, 6, 3));
-  const smoothAngleDegrees = clamp(
-    options.smoothAngleDegrees,
-    0.1,
-    45,
-    profile === 'precise' ? 7 : profile === 'smooth' ? 16 : 11
-  );
-  const mergeAngleDegrees = clamp(
-    options.mergeAngleDegrees,
-    0.1,
-    30,
-    profile === 'precise' ? 2.5 : profile === 'smooth' ? 7 : 4.5
-  );
+  const smoothAngleDegrees = clamp(options.smoothAngleDegrees, 0.1, 45, profile === 'precise' ? 7 : profile === 'smooth' ? 16 : 11);
+  const mergeAngleDegrees = clamp(options.mergeAngleDegrees, 0.1, 30, profile === 'precise' ? 2.5 : profile === 'smooth' ? 7 : 4.5);
 
   const stats = {
     profile,
+    adaptiveFitting,
     pathCountBefore: 0,
     pathCountAfter: 0,
     duplicatePathsRemoved: 0,
@@ -177,6 +174,11 @@ function cleanupVectorSvg(svg, options = {}) {
     autoClosedSubpaths: 0,
     openSubpathsRemaining: 0,
     parseErrors: 0,
+    adaptiveTextPaths: 0,
+    adaptiveSharpPaths: 0,
+    adaptiveOrganicPaths: 0,
+    cornerProtectedPaths: 0,
+    ellipsesRecognized: 0,
     lineTolerance,
     microSegmentThreshold,
     closeTolerance,
@@ -207,16 +209,34 @@ function cleanupVectorSvg(svg, options = {}) {
       stats.axisSnaps += cleaned.stats.axisSnaps;
       stats.collinearNodesRemoved += cleaned.stats.collinearNodesRemoved;
 
-      const bezier = optimizeBezierSegments(segments, {
+      let adaptive = null;
+      let fittingOptions = {
         errorTolerance: bezierErrorTolerance,
         junctionTolerance: Math.max(0.01, lineTolerance * 0.35),
         smoothAngleDegrees,
         mergeAngleDegrees
-      });
-      segments = bezier.segments;
-      stats.tangentJunctionsSmoothed += bezier.stats.tangentJunctionsSmoothed;
-      stats.cubicPairsMerged += bezier.stats.cubicPairsMerged;
-      stats.maximumBezierDeviation = Math.max(stats.maximumBezierDeviation, bezier.stats.maximumDeviation);
+      };
+      if (adaptiveFitting) {
+        adaptive = analyzeAdaptivePath(segments, size);
+        if (adaptive.textLike) stats.adaptiveTextPaths += 1;
+        else if (adaptive.sharp) stats.adaptiveSharpPaths += 1;
+        else if (adaptive.organic) stats.adaptiveOrganicPaths += 1;
+        fittingOptions = adaptiveFittingOptions(adaptive, fittingOptions);
+        if (fittingOptions.skipBezierMerge) stats.cornerProtectedPaths += 1;
+        const ellipse = fitEllipseIfEligible(segments, adaptive, options);
+        if (ellipse.fitted) {
+          segments = ellipse.segments;
+          stats.ellipsesRecognized += 1;
+        }
+      }
+
+      if (!fittingOptions.skipBezierMerge) {
+        const bezier = optimizeBezierSegments(segments, fittingOptions);
+        segments = bezier.segments;
+        stats.tangentJunctionsSmoothed += bezier.stats.tangentJunctionsSmoothed;
+        stats.cubicPairsMerged += bezier.stats.cubicPairsMerged;
+        stats.maximumBezierDeviation = Math.max(stats.maximumBezierDeviation, bezier.stats.maximumDeviation);
+      }
 
       const closed = closeEligibleSubpaths(segments, closeTolerance);
       segments = closed.segments;
