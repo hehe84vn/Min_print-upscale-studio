@@ -7,19 +7,36 @@ const preload = fs.readFileSync(new URL('../src/main/preload.js', import.meta.ur
 const bootstrap = fs.readFileSync(new URL('../src/main/bootstrap.js', import.meta.url), 'utf8');
 const ui = fs.readFileSync(new URL('../src/renderer/update-manager-v16-ui.js', import.meta.url), 'utf8');
 const loader = fs.readFileSync(new URL('../src/renderer/zoom.js', import.meta.url), 'utf8');
+const releaseWorkflow = fs.readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
 
 assert.match(service, /api\.github\.com\/repos/);
 assert.match(service, /compareVersions/);
 assert.match(service, /assetForPlatform/);
 assert.match(service, /draft \|\| release\.prerelease/);
+assert.match(service, /downloadAsset/);
+assert.match(service, /createHash\('sha256'\)/);
+assert.match(service, /\.partial/);
 assert.match(ipc, /update:check/);
+assert.match(ipc, /update:install/);
+assert.match(ipc, /assertInstallAllowed/);
+assert.match(ipc, /launchWindowsInstaller/);
+assert.match(ipc, /app\.quit/);
 assert.match(ipc, /update:open-release/);
 assert.match(preload, /checkForUpdates/);
+assert.match(preload, /installUpdate/);
+assert.match(preload, /onUpdateProgress/);
 assert.match(preload, /openUpdateRelease/);
 assert.match(bootstrap, /updateManagerIpc/);
 assert.match(ui, /Kiểm tra cập nhật/);
+assert.match(ui, /Tải và cài đặt/);
+assert.match(ui, /Đang có job xử lý/);
+assert.match(ui, /getProductionStatus/);
 assert.match(ui, /GitHub Releases/);
 assert.match(ui, /setTimeout\(\(\) => checkForUpdates/);
 assert.match(loader, /update-manager-v16-ui\.js/);
+assert.match(releaseWorkflow, /tags:/);
+assert.match(releaseWorkflow, /dist:win/);
+assert.match(releaseWorkflow, /dist:mac:\$\{\{ matrix\.arch \}\}/);
+assert.match(releaseWorkflow, /softprops\/action-gh-release@v2/);
 
 console.log('Update Manager V16 smoke test passed.');
