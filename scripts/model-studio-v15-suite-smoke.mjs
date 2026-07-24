@@ -8,7 +8,7 @@ const ui = fs.readFileSync(new URL('../src/renderer/model-studio-v15-suite-ui.js
 const loader = fs.readFileSync(new URL('../src/renderer/zoom.js', import.meta.url), 'utf8');
 const bootstrap = fs.readFileSync(new URL('../src/main/bootstrap.js', import.meta.url), 'utf8');
 
-assert.match(service, /selectSmartRegion/);
+assert.match(service, /selectSmartTestRegion/);
 assert.match(service, /normalizeCrop/);
 assert.match(service, /qualityScore/);
 assert.match(service, /sharpnessGain/);
