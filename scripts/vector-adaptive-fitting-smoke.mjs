@@ -25,7 +25,8 @@ const cleaned = cleanupVectorSvg(svg, { profile: 'balanced', minimumEllipseSegme
 assert.equal(cleaned.stats.parseErrors, 0);
 assert.ok(cleaned.stats.adaptiveTextPaths >= 1, 'Cleanup must report typography-aware paths.');
 assert.ok(cleaned.stats.cornerProtectedPaths >= 1, 'Cleanup must protect sharp text corners.');
-assert.ok(cleaned.stats.ellipsesRecognized >= 1, 'Cleanup must report recognized ellipses.');
-assert.match(cleaned.svg, /<path/);
+assert.ok(cleaned.stats.adaptiveOrganicPaths >= 1, 'Cleanup must classify smooth curved paths as organic geometry.');
+const cleanedPaths = [...cleaned.svg.matchAll(/\bd=(['"])([^'"]+)\1/gi)].map((match) => parsePathData(match[2]));
+assert.ok(cleanedPaths.some((segments) => segments.filter((segment) => segment.type === 'C').length === 4), 'Cleanup must preserve or normalize a four-cubic ellipse contour.');
 
-console.log(`Adaptive fitting V11 OK: ${cleaned.stats.adaptiveTextPaths} text path, ${cleaned.stats.cornerProtectedPaths} corner-protected, ${cleaned.stats.ellipsesRecognized} ellipse.`);
+console.log(`Adaptive fitting V11 OK: ${cleaned.stats.adaptiveTextPaths} text path, ${cleaned.stats.cornerProtectedPaths} corner-protected, ${cleaned.stats.adaptiveOrganicPaths} organic path.`);
