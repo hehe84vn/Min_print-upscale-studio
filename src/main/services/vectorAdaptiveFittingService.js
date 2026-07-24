@@ -1,229 +1,27 @@
 'use strict';
 
 const { serializePathData } = require('./vectorGeometryLock');
+const { refitLongLineRuns } = require('./vectorLongContourRefitService');
 
-function clamp(value, minimum, maximum) {
-  return Math.max(minimum, Math.min(maximum, value));
-}
-
-function pointDistance(a, b) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-function segmentPoints(segment) {
-  const points = [segment.start, segment.end];
-  if (segment.c1) points.push(segment.c1);
-  if (segment.c2) points.push(segment.c2);
-  if (segment.c) points.push(segment.c);
-  return points.filter(Boolean);
-}
-
-function boundsForSegments(segments) {
-  const points = segments.flatMap(segmentPoints);
-  if (!points.length) return { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0 };
-  const xs = points.map((point) => point.x);
-  const ys = points.map((point) => point.y);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
-}
-
-function tangentAtStart(segment) {
-  if (segment.type === 'C') return { x: segment.c1.x - segment.start.x, y: segment.c1.y - segment.start.y };
-  if (segment.type === 'Q') return { x: segment.c.x - segment.start.x, y: segment.c.y - segment.start.y };
-  return { x: segment.end.x - segment.start.x, y: segment.end.y - segment.start.y };
-}
-
-function tangentAtEnd(segment) {
-  if (segment.type === 'C') return { x: segment.end.x - segment.c2.x, y: segment.end.y - segment.c2.y };
-  if (segment.type === 'Q') return { x: segment.end.x - segment.c.x, y: segment.end.y - segment.c.y };
-  return { x: segment.end.x - segment.start.x, y: segment.end.y - segment.start.y };
-}
-
-function vectorAngleDegrees(left, right) {
-  const leftLength = Math.hypot(left.x, left.y);
-  const rightLength = Math.hypot(right.x, right.y);
-  if (leftLength < 1e-9 || rightLength < 1e-9) return 0;
-  const cosine = clamp((left.x * right.x + left.y * right.y) / (leftLength * rightLength), -1, 1);
-  return Math.acos(cosine) * 180 / Math.PI;
-}
-
-function countSharpCorners(segments, thresholdDegrees = 42) {
-  const geometry = segments.filter((segment) => !['M', 'Z'].includes(segment.type));
-  let sharpCorners = 0;
-  for (let index = 1; index < geometry.length; index += 1) {
-    const incoming = tangentAtEnd(geometry[index - 1]);
-    const outgoing = tangentAtStart(geometry[index]);
-    if (vectorAngleDegrees(incoming, outgoing) >= thresholdDegrees) sharpCorners += 1;
-  }
-  return sharpCorners;
-}
-
-function analyzeAdaptivePath(segments, canvasSize = { width: 1000, height: 1000 }) {
-  const geometry = segments.filter((segment) => !['M', 'Z'].includes(segment.type));
-  const bounds = boundsForSegments(segments);
-  const maximumCanvas = Math.max(canvasSize.width || 1, canvasSize.height || 1, 1);
-  const extentRatio = Math.max(bounds.width, bounds.height) / maximumCanvas;
-  const lineCount = geometry.filter((segment) => segment.type === 'L').length;
-  const curveCount = geometry.filter((segment) => ['C', 'Q', 'A'].includes(segment.type)).length;
-  const closed = segments.some((segment) => segment.type === 'Z');
-  const sharpCorners = countSharpCorners(segments);
-  const cornerRatio = sharpCorners / Math.max(1, geometry.length - 1);
-  const lineRatio = lineCount / Math.max(1, geometry.length);
-  const aspect = bounds.height > 1e-9 ? bounds.width / bounds.height : 1;
-
-  const textLike = extentRatio <= 0.34
-    && geometry.length >= 4
-    && (cornerRatio >= 0.18 || lineRatio >= 0.5)
-    && (aspect >= 0.18 && aspect <= 8);
-  const sharp = cornerRatio >= 0.24 || lineRatio >= 0.72;
-  const organic = !sharp && curveCount >= lineCount;
-
-  return {
-    bounds,
-    geometryCount: geometry.length,
-    lineCount,
-    curveCount,
-    lineRatio,
-    sharpCorners,
-    cornerRatio,
-    closed,
-    textLike,
-    sharp,
-    organic,
-    className: textLike ? 'text' : sharp ? 'sharp' : organic ? 'organic' : 'mixed'
-  };
-}
-
-function adaptiveFittingOptions(analysis, base = {}) {
-  const options = { ...base };
-  if (analysis.textLike) {
-    options.errorTolerance = Number(base.errorTolerance) * 0.55;
-    options.smoothAngleDegrees = Math.min(Number(base.smoothAngleDegrees), 5.5);
-    options.mergeAngleDegrees = Math.min(Number(base.mergeAngleDegrees), 1.8);
-    options.skipBezierMerge = analysis.cornerRatio >= 0.28;
-  } else if (analysis.sharp) {
-    options.errorTolerance = Number(base.errorTolerance) * 0.7;
-    options.smoothAngleDegrees = Math.min(Number(base.smoothAngleDegrees), 4);
-    options.mergeAngleDegrees = Math.min(Number(base.mergeAngleDegrees), 1.5);
-    options.skipBezierMerge = true;
-  } else if (analysis.organic) {
-    options.errorTolerance = Number(base.errorTolerance) * 1.15;
-    options.smoothAngleDegrees = Math.max(Number(base.smoothAngleDegrees), 13);
-    options.mergeAngleDegrees = Math.max(Number(base.mergeAngleDegrees), 5.5);
-    options.skipBezierMerge = false;
-  }
-  return options;
-}
-
-function interpolateLine(start, end, t) {
-  return {
-    x: start.x + (end.x - start.x) * t,
-    y: start.y + (end.y - start.y) * t
-  };
-}
-
-function evaluateQuadratic(segment, t) {
-  const inverse = 1 - t;
-  return {
-    x: inverse * inverse * segment.start.x + 2 * inverse * t * segment.c.x + t * t * segment.end.x,
-    y: inverse * inverse * segment.start.y + 2 * inverse * t * segment.c.y + t * t * segment.end.y
-  };
-}
-
-function evaluateCubic(segment, t) {
-  const inverse = 1 - t;
-  const inverseSquared = inverse * inverse;
-  const tSquared = t * t;
-  return {
-    x: inverseSquared * inverse * segment.start.x
-      + 3 * inverseSquared * t * segment.c1.x
-      + 3 * inverse * tSquared * segment.c2.x
-      + tSquared * t * segment.end.x,
-    y: inverseSquared * inverse * segment.start.y
-      + 3 * inverseSquared * t * segment.c1.y
-      + 3 * inverse * tSquared * segment.c2.y
-      + tSquared * t * segment.end.y
-  };
-}
-
-function sampleContourPoints(segments, samplesPerSegment = 8) {
-  const points = [];
-  for (const segment of segments) {
-    if (['M', 'Z'].includes(segment.type)) continue;
-    for (let sample = 0; sample <= samplesPerSegment; sample += 1) {
-      if (points.length && sample === 0) continue;
-      const t = sample / samplesPerSegment;
-      if (segment.type === 'C') points.push(evaluateCubic(segment, t));
-      else if (segment.type === 'Q') points.push(evaluateQuadratic(segment, t));
-      else points.push(interpolateLine(segment.start, segment.end, t));
-    }
-  }
-  return points;
-}
-
-function ellipseResidual(segments, bounds) {
-  const center = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
-  const rx = bounds.width / 2;
-  const ry = bounds.height / 2;
-  if (rx < 1e-6 || ry < 1e-6) return Infinity;
-  const points = sampleContourPoints(segments);
-  if (points.length < 8) return Infinity;
-  let total = 0;
-  for (const point of points) {
-    const normalized = Math.sqrt(((point.x - center.x) / rx) ** 2 + ((point.y - center.y) / ry) ** 2);
-    total += Math.abs(normalized - 1);
-  }
-  return total / points.length;
-}
-
-function createEllipseSegments(bounds) {
-  const cx = (bounds.minX + bounds.maxX) / 2;
-  const cy = (bounds.minY + bounds.maxY) / 2;
-  const rx = bounds.width / 2;
-  const ry = bounds.height / 2;
-  const k = 0.5522847498307936;
-  return [
-    { type: 'M', start: { x: cx + rx, y: cy }, end: { x: cx + rx, y: cy } },
-    { type: 'C', start: { x: cx + rx, y: cy }, c1: { x: cx + rx, y: cy + k * ry }, c2: { x: cx + k * rx, y: cy + ry }, end: { x: cx, y: cy + ry } },
-    { type: 'C', start: { x: cx, y: cy + ry }, c1: { x: cx - k * rx, y: cy + ry }, c2: { x: cx - rx, y: cy + k * ry }, end: { x: cx - rx, y: cy } },
-    { type: 'C', start: { x: cx - rx, y: cy }, c1: { x: cx - rx, y: cy - k * ry }, c2: { x: cx - k * rx, y: cy - ry }, end: { x: cx, y: cy - ry } },
-    { type: 'C', start: { x: cx, y: cy - ry }, c1: { x: cx + k * rx, y: cy - ry }, c2: { x: cx + rx, y: cy - k * ry }, end: { x: cx + rx, y: cy } },
-    { type: 'Z', start: { x: cx + rx, y: cy }, end: { x: cx + rx, y: cy } }
-  ];
-}
-
-function fitEllipseIfEligible(segments, analysis, options = {}) {
-  const minimumSegments = Number(options.minimumEllipseSegments ?? 7);
-  const maximumResidual = Number(options.maximumEllipseResidual ?? 0.045);
-  const aspect = analysis.bounds.height > 1e-9 ? analysis.bounds.width / analysis.bounds.height : 1;
-  const eligible = analysis.closed
-    && analysis.geometryCount >= minimumSegments
-    && !analysis.textLike
-    && !analysis.sharp
-    && aspect >= 0.18
-    && aspect <= 5.5;
-  if (!eligible) return { segments, fitted: false, residual: null };
-  const residual = ellipseResidual(segments, analysis.bounds);
-  if (residual > maximumResidual) return { segments, fitted: false, residual: Number(residual.toFixed(5)) };
-  const fittedSegments = createEllipseSegments(analysis.bounds);
-  return {
-    segments: fittedSegments,
-    fitted: true,
-    residual: Number(residual.toFixed(5)),
-    serialized: serializePathData(fittedSegments, 3)
-  };
-}
-
-module.exports = {
-  adaptiveFittingOptions,
-  analyzeAdaptivePath,
-  boundsForSegments,
-  countSharpCorners,
-  createEllipseSegments,
-  ellipseResidual,
-  fitEllipseIfEligible,
-  sampleContourPoints
-};
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function distance(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+function segmentPoints(s){const p=[s.start,s.end];if(s.c1)p.push(s.c1);if(s.c2)p.push(s.c2);if(s.c)p.push(s.c);return p.filter(Boolean);}
+function boundsForSegments(segments){const p=segments.flatMap(segmentPoints);if(!p.length)return{minX:0,minY:0,maxX:0,maxY:0,width:0,height:0};const xs=p.map(x=>x.x),ys=p.map(x=>x.y);const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);return{minX,minY,maxX,maxY,width:maxX-minX,height:maxY-minY};}
+function tangentAtStart(s){if(s.type==='C')return{x:s.c1.x-s.start.x,y:s.c1.y-s.start.y};if(s.type==='Q')return{x:s.c.x-s.start.x,y:s.c.y-s.start.y};return{x:s.end.x-s.start.x,y:s.end.y-s.start.y};}
+function tangentAtEnd(s){if(s.type==='C')return{x:s.end.x-s.c2.x,y:s.end.y-s.c2.y};if(s.type==='Q')return{x:s.end.x-s.c.x,y:s.end.y-s.c.y};return{x:s.end.x-s.start.x,y:s.end.y-s.start.y};}
+function vectorAngleDegrees(a,b){const la=Math.hypot(a.x,a.y),lb=Math.hypot(b.x,b.y);if(la<1e-9||lb<1e-9)return 0;return Math.acos(clamp((a.x*b.x+a.y*b.y)/(la*lb),-1,1))*180/Math.PI;}
+function countSharpCorners(segments,thresholdDegrees=42){const g=segments.filter(s=>!['M','Z'].includes(s.type));let n=0;for(let i=1;i<g.length;i+=1)if(vectorAngleDegrees(tangentAtEnd(g[i-1]),tangentAtStart(g[i]))>=thresholdDegrees)n+=1;return n;}
+function analyzeAdaptivePath(segments,canvasSize={width:1000,height:1000}){const g=segments.filter(s=>!['M','Z'].includes(s.type));const bounds=boundsForSegments(segments);const maximum=Math.max(canvasSize.width||1,canvasSize.height||1,1);const extentRatio=Math.max(bounds.width,bounds.height)/maximum;const lineCount=g.filter(s=>s.type==='L').length;const curveCount=g.filter(s=>['C','Q','A'].includes(s.type)).length;const closed=segments.some(s=>s.type==='Z');const sharpCorners=countSharpCorners(segments);const cornerRatio=sharpCorners/Math.max(1,g.length-1);const lineRatio=lineCount/Math.max(1,g.length);const aspect=bounds.height>1e-9?bounds.width/bounds.height:1;const textLike=extentRatio<=0.34&&g.length>=4&&(cornerRatio>=0.18||lineRatio>=0.5)&&aspect>=0.18&&aspect<=8;const sharp=cornerRatio>=0.24||lineRatio>=0.72;const organic=!sharp&&curveCount>=lineCount;return{bounds,geometryCount:g.length,lineCount,curveCount,lineRatio,sharpCorners,cornerRatio,closed,textLike,sharp,organic,className:textLike?'text':sharp?'sharp':organic?'organic':'mixed'};}
+function adaptiveFittingOptions(a,base={}){const o={...base};if(a.textLike){o.errorTolerance=Number(base.errorTolerance)*0.55;o.smoothAngleDegrees=Math.min(Number(base.smoothAngleDegrees),5.5);o.mergeAngleDegrees=Math.min(Number(base.mergeAngleDegrees),1.8);o.skipBezierMerge=a.cornerRatio>=0.28;}else if(a.sharp){o.errorTolerance=Number(base.errorTolerance)*0.7;o.smoothAngleDegrees=Math.min(Number(base.smoothAngleDegrees),4);o.mergeAngleDegrees=Math.min(Number(base.mergeAngleDegrees),1.5);o.skipBezierMerge=true;}else if(a.organic){o.errorTolerance=Number(base.errorTolerance)*1.15;o.smoothAngleDegrees=Math.max(Number(base.smoothAngleDegrees),13);o.mergeAngleDegrees=Math.max(Number(base.mergeAngleDegrees),5.5);o.skipBezierMerge=false;}return o;}
+function line(a,b,t){return{x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t};}
+function quadratic(s,t){const u=1-t;return{x:u*u*s.start.x+2*u*t*s.c.x+t*t*s.end.x,y:u*u*s.start.y+2*u*t*s.c.y+t*t*s.end.y};}
+function cubic(s,t){const u=1-t;return{x:u*u*u*s.start.x+3*u*u*t*s.c1.x+3*u*t*t*s.c2.x+t*t*t*s.end.x,y:u*u*u*s.start.y+3*u*u*t*s.c1.y+3*u*t*t*s.c2.y+t*t*t*s.end.y};}
+function sampleContourPoints(segments,samples=8){const p=[];for(const s of segments){if(['M','Z'].includes(s.type))continue;for(let i=0;i<=samples;i+=1){if(p.length&&i===0)continue;const t=i/samples;p.push(s.type==='C'?cubic(s,t):s.type==='Q'?quadratic(s,t):line(s.start,s.end,t));}}return p;}
+function contourBounds(points){if(!points.length)return{minX:0,minY:0,maxX:0,maxY:0,width:0,height:0};const xs=points.map(p=>p.x),ys=points.map(p=>p.y);const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);return{minX,minY,maxX,maxY,width:maxX-minX,height:maxY-minY};}
+function ellipseResidual(segments,bounds=null){const points=sampleContourPoints(segments);const b=bounds||contourBounds(points);const center={x:(b.minX+b.maxX)/2,y:(b.minY+b.maxY)/2};const rx=b.width/2,ry=b.height/2;if(rx<1e-6||ry<1e-6||points.length<8)return Infinity;let total=0;for(const p of points)total+=Math.abs(Math.sqrt(((p.x-center.x)/rx)**2+((p.y-center.y)/ry)**2)-1);return total/points.length;}
+function createEllipseSegments(b){const cx=(b.minX+b.maxX)/2,cy=(b.minY+b.maxY)/2,rx=b.width/2,ry=b.height/2,k=0.5522847498307936;return[{type:'M',start:{x:cx+rx,y:cy},end:{x:cx+rx,y:cy}},{type:'C',start:{x:cx+rx,y:cy},c1:{x:cx+rx,y:cy+k*ry},c2:{x:cx+k*rx,y:cy+ry},end:{x:cx,y:cy+ry}},{type:'C',start:{x:cx,y:cy+ry},c1:{x:cx-k*rx,y:cy+ry},c2:{x:cx-rx,y:cy+k*ry},end:{x:cx-rx,y:cy}},{type:'C',start:{x:cx-rx,y:cy},c1:{x:cx-rx,y:cy-k*ry},c2:{x:cx-k*rx,y:cy-ry},end:{x:cx,y:cy-ry}},{type:'C',start:{x:cx,y:cy-ry},c1:{x:cx+k*rx,y:cy-ry},c2:{x:cx+rx,y:cy-k*ry},end:{x:cx+rx,y:cy}},{type:'Z',start:{x:cx+rx,y:cy},end:{x:cx+rx,y:cy}}];}
+function fitEllipseIfEligible(segments,analysis,options={}){const minimum=Number(options.minimumEllipseSegments??7),maximumResidual=Number(options.maximumEllipseResidual??0.045);const points=sampleContourPoints(segments);const trueBounds=contourBounds(points);const aspect=trueBounds.height>1e-9?trueBounds.width/trueBounds.height:1;const eligible=analysis.closed&&analysis.geometryCount>=minimum&&!analysis.textLike&&!analysis.sharp&&aspect>=0.18&&aspect<=5.5;if(eligible){const residual=ellipseResidual(segments,trueBounds);if(residual<=maximumResidual){const fitted=createEllipseSegments(trueBounds);return{segments:fitted,fitted:true,residual:Number(residual.toFixed(5)),serialized:serializePathData(fitted,3)};}}
+  const refit=refitLongLineRuns(segments,{minimumRun:options.minimumContourRun??12,errorTolerance:options.contourRefitTolerance??Math.max(0.6,Math.max(trueBounds.width,trueBounds.height)*0.0012),cornerAngleDegrees:options.contourCornerAngle??38});
+  if(refit.stats.runsRefit>0){segments.splice(0,segments.length,...refit.segments);return{segments,fitted:false,residual:null,refit:true,refitStats:refit.stats};}
+  return{segments,fitted:false,residual:null,refit:false};}
+module.exports={adaptiveFittingOptions,analyzeAdaptivePath,boundsForSegments,countSharpCorners,createEllipseSegments,ellipseResidual,fitEllipseIfEligible,sampleContourPoints};
