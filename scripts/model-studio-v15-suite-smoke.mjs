@@ -16,13 +16,14 @@ assert.match(service, /edgeDrift/);
 assert.match(service, /haloRisk/);
 assert.match(service, /hybridRecommended/);
 assert.match(service, /fullImagePreset/);
+assert.match(service, /packaging-hybrid/);
 assert.match(ipc, /model-studio:preview/);
 assert.match(preload, /runModelStudioPreview/);
 assert.match(bootstrap, /'model-studio:preview'/);
 assert.match(ui, /Auto Preview Crop/);
 assert.match(ui, /Chọn crop thủ công/);
 assert.match(ui, /Dùng kết quả tốt nhất cho toàn ảnh/);
-assert.match(ui, /packaging-hybrid/);
+assert.match(ui, /Packaging Hybrid/);
 assert.match(loader, /model-studio-v15-suite-ui\.js/);
 
 console.log('Complete Model Studio V15 suite smoke test passed.');
