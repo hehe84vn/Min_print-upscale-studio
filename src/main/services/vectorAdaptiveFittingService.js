@@ -118,12 +118,58 @@ function adaptiveFittingOptions(analysis, base = {}) {
   return options;
 }
 
+function interpolateLine(start, end, t) {
+  return {
+    x: start.x + (end.x - start.x) * t,
+    y: start.y + (end.y - start.y) * t
+  };
+}
+
+function evaluateQuadratic(segment, t) {
+  const inverse = 1 - t;
+  return {
+    x: inverse * inverse * segment.start.x + 2 * inverse * t * segment.c.x + t * t * segment.end.x,
+    y: inverse * inverse * segment.start.y + 2 * inverse * t * segment.c.y + t * t * segment.end.y
+  };
+}
+
+function evaluateCubic(segment, t) {
+  const inverse = 1 - t;
+  const inverseSquared = inverse * inverse;
+  const tSquared = t * t;
+  return {
+    x: inverseSquared * inverse * segment.start.x
+      + 3 * inverseSquared * t * segment.c1.x
+      + 3 * inverse * tSquared * segment.c2.x
+      + tSquared * t * segment.end.x,
+    y: inverseSquared * inverse * segment.start.y
+      + 3 * inverseSquared * t * segment.c1.y
+      + 3 * inverse * tSquared * segment.c2.y
+      + tSquared * t * segment.end.y
+  };
+}
+
+function sampleContourPoints(segments, samplesPerSegment = 8) {
+  const points = [];
+  for (const segment of segments) {
+    if (['M', 'Z'].includes(segment.type)) continue;
+    for (let sample = 0; sample <= samplesPerSegment; sample += 1) {
+      if (points.length && sample === 0) continue;
+      const t = sample / samplesPerSegment;
+      if (segment.type === 'C') points.push(evaluateCubic(segment, t));
+      else if (segment.type === 'Q') points.push(evaluateQuadratic(segment, t));
+      else points.push(interpolateLine(segment.start, segment.end, t));
+    }
+  }
+  return points;
+}
+
 function ellipseResidual(segments, bounds) {
   const center = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
   const rx = bounds.width / 2;
   const ry = bounds.height / 2;
   if (rx < 1e-6 || ry < 1e-6) return Infinity;
-  const points = segments.flatMap(segmentPoints);
+  const points = sampleContourPoints(segments);
   if (points.length < 8) return Infinity;
   let total = 0;
   for (const point of points) {
@@ -162,11 +208,12 @@ function fitEllipseIfEligible(segments, analysis, options = {}) {
   if (!eligible) return { segments, fitted: false, residual: null };
   const residual = ellipseResidual(segments, analysis.bounds);
   if (residual > maximumResidual) return { segments, fitted: false, residual: Number(residual.toFixed(5)) };
+  const fittedSegments = createEllipseSegments(analysis.bounds);
   return {
-    segments: createEllipseSegments(analysis.bounds),
+    segments: fittedSegments,
     fitted: true,
     residual: Number(residual.toFixed(5)),
-    serialized: serializePathData(createEllipseSegments(analysis.bounds), 3)
+    serialized: serializePathData(fittedSegments, 3)
   };
 }
 
@@ -177,5 +224,6 @@ module.exports = {
   countSharpCorners,
   createEllipseSegments,
   ellipseResidual,
-  fitEllipseIfEligible
+  fitEllipseIfEligible,
+  sampleContourPoints
 };
