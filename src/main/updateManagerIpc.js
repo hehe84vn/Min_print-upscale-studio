@@ -9,10 +9,24 @@ let registered = false;
 let pendingCheck = null;
 let pendingInstall = null;
 
+function withTimeout(promise, timeoutMs, message) {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 function broadcast(channel, payload) {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send(channel, payload);
   }
+}
+
+function sendToSender(event, channel, payload) {
+  if (!event?.sender?.isDestroyed?.()) event.sender.send(channel, payload);
 }
 
 function assertInstallAllowed(payload = {}) {
@@ -33,10 +47,30 @@ function registerUpdateManagerIpc() {
   if (registered) return;
   registered = true;
 
-  ipcMain.handle('update:check', async () => {
+  ipcMain.handle('update:check', async (event) => {
+    const currentVersion = app.getVersion();
     if (!pendingCheck) {
-      pendingCheck = checkForUpdates({ currentVersion: app.getVersion(), platform: process.platform, arch: process.arch })
-        .finally(() => { pendingCheck = null; });
+      const report = (progress) => sendToSender(event, 'update:check-progress', { currentVersion, ...progress });
+      const operation = checkForUpdates({
+        currentVersion,
+        platform: process.platform,
+        arch: process.arch,
+        onProgress: report
+      });
+      pendingCheck = withTimeout(
+        operation,
+        18000,
+        'Không thể kết nối máy chủ cập nhật. Hãy kiểm tra Internet và thử lại.'
+      ).catch((error) => {
+        report({ phase: 'failed', message: error.message || 'Không thể kiểm tra cập nhật.' });
+        throw error;
+      }).finally(() => { pendingCheck = null; });
+    } else {
+      sendToSender(event, 'update:check-progress', {
+        phase: 'waiting',
+        currentVersion,
+        message: 'Đang chờ lần kiểm tra hiện tại hoàn tất...'
+      });
     }
     return pendingCheck;
   });
@@ -46,7 +80,11 @@ function registerUpdateManagerIpc() {
     if (pendingInstall) return pendingInstall;
 
     pendingInstall = (async () => {
-      const latest = await checkForUpdates({ currentVersion: app.getVersion(), platform: process.platform, arch: process.arch });
+      const latest = await withTimeout(
+        checkForUpdates({ currentVersion: app.getVersion(), platform: process.platform, arch: process.arch }),
+        18000,
+        'Không thể kết nối máy chủ cập nhật. Hãy kiểm tra Internet và thử lại.'
+      );
       if (!latest.updateAvailable) throw new Error('Không có phiên bản mới hơn để tải.');
       if (!latest.asset?.downloadUrl) throw new Error('Chưa có bộ cài phù hợp cho máy này.');
       broadcast('update:progress', { phase: 'downloading', percent: 0, message: 'Đang tải bản cập nhật...' });
@@ -85,4 +123,4 @@ function registerUpdateManagerIpc() {
 
 app.whenReady().then(registerUpdateManagerIpc);
 
-module.exports = { assertInstallAllowed, launchWindowsInstaller, registerUpdateManagerIpc };
+module.exports = { assertInstallAllowed, launchWindowsInstaller, registerUpdateManagerIpc, withTimeout };

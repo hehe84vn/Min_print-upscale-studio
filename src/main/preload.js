@@ -50,6 +50,11 @@ contextBridge.exposeInMainWorld('studio', {
     ipcRenderer.on('job:progress', listener);
     return () => ipcRenderer.removeListener('job:progress', listener);
   },
+  onUpdateCheckProgress: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('update:check-progress', listener);
+    return () => ipcRenderer.removeListener('update:check-progress', listener);
+  },
   onUpdateProgress: (callback) => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('update:progress', listener);

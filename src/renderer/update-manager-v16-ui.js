@@ -4,6 +4,16 @@
   let checking = false;
   let installing = false;
 
+  function withTimeout(promise, timeoutMs, message) {
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+      timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+      if (timer) window.clearTimeout(timer);
+    });
+  }
+
   function installStyles() {
     if ($('updateManagerV16Styles')) return;
     const style = document.createElement('style');
@@ -104,7 +114,7 @@
       return;
     }
 
-    setStatus(result.reason || `Bạn đang dùng phiên bản mới nhất (${result.currentVersion}).`);
+    setStatus(result.reason || `Bạn đang dùng phiên bản mới nhất (${result.currentVersion}).`, 'success');
     notes.hidden = true;
     installButton.hidden = true;
     if (manual) showModal();
@@ -139,7 +149,21 @@
   }
 
   async function checkForUpdates({ manual = false } = {}) {
-    if (checking || !window.studio?.checkForUpdates) return;
+    if (!window.studio?.checkForUpdates) {
+      if (manual) {
+        showModal();
+        setStatus('Chức năng kiểm tra cập nhật chưa sẵn sàng. Hãy khởi động lại ứng dụng.', 'error');
+      }
+      return;
+    }
+    if (checking) {
+      if (manual) {
+        showModal();
+        setStatus('Đang chờ lần kiểm tra hiện tại hoàn tất...');
+      }
+      return;
+    }
+
     checking = true;
     const button = $('checkForUpdatesBtn');
     if (button) {
@@ -148,10 +172,15 @@
     }
     if (manual) {
       showModal();
-      setStatus('Đang kiểm tra phiên bản mới...');
+      setStatus('Đang kết nối máy chủ cập nhật...');
     }
     try {
-      renderResult(await window.studio.checkForUpdates(), manual);
+      const result = await withTimeout(
+        window.studio.checkForUpdates(),
+        22000,
+        'Kiểm tra cập nhật quá thời gian. Hãy kiểm tra Internet và thử lại.'
+      );
+      renderResult(result, manual);
     } catch (error) {
       if (manual) {
         setStatus(error.message || 'Không thể kiểm tra cập nhật. Hãy thử lại.', 'error');
@@ -169,6 +198,20 @@
     }
   }
 
+  function installCheckProgressListener() {
+    if (!window.studio?.onUpdateCheckProgress) return;
+    window.studio.onUpdateCheckProgress((progress = {}) => {
+      if (progress.currentVersion) $('updateCurrentVersion').textContent = progress.currentVersion;
+      if (progress.latestVersion) $('updateLatestVersion').textContent = progress.latestVersion;
+      if (checking && !$('updateManagerV16Modal').hidden) {
+        const type = progress.phase === 'failed' ? 'error'
+          : progress.phase === 'asset_missing' ? 'warning'
+            : ['connected', 'release_received', 'asset_matched', 'completed'].includes(progress.phase) ? 'success' : '';
+        setStatus(progress.message || 'Đang kiểm tra phiên bản mới...', type);
+      }
+    });
+  }
+
   function installProgressListener() {
     if (!window.studio?.onUpdateProgress) return;
     window.studio.onUpdateProgress((progress = {}) => {
@@ -183,6 +226,7 @@
   installStyles();
   installButton();
   installModal();
+  installCheckProgressListener();
   installProgressListener();
   window.setTimeout(() => checkForUpdates({ manual: false }), 7000);
 })();
