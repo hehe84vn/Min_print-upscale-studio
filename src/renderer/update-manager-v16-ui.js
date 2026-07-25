@@ -46,21 +46,17 @@
     modal.hidden = true;
     modal.innerHTML = `
       <section class="update-v16-card" role="dialog" aria-modal="true" aria-labelledby="updateManagerV16Title">
-        <div class="update-v16-head"><div><div class="update-v16-kicker">UPDATE MANAGER V16</div><h2 id="updateManagerV16Title">Cập nhật Print Upscale Studio</h2></div><button id="closeUpdateManagerV16" class="update-v16-close" type="button" aria-label="Đóng">×</button></div>
+        <div class="update-v16-head"><div><div class="update-v16-kicker">UPDATE MANAGER</div><h2 id="updateManagerV16Title">Cập nhật Print Upscale Studio</h2></div><button id="closeUpdateManagerV16" class="update-v16-close" type="button" aria-label="Đóng">×</button></div>
         <div class="update-v16-version"><div><small>PHIÊN BẢN ĐANG DÙNG</small><strong id="updateCurrentVersion">—</strong></div><div><small>PHIÊN BẢN MỚI NHẤT</small><strong id="updateLatestVersion">—</strong></div></div>
         <div id="updateManagerV16Status" class="update-v16-status">Đang kiểm tra...</div>
         <div id="updateDownloadProgress" class="update-v16-progress" hidden><span></span></div>
         <div id="updateReleaseNotes" class="update-v16-notes" hidden></div>
-        <div class="update-v16-actions"><button id="updateLaterBtn" class="secondary" type="button">Để sau</button><button id="openUpdateReleaseBtn" class="secondary" type="button" hidden>Mở GitHub Releases</button><button id="installUpdateBtn" class="primary" type="button" hidden>Tải và cài đặt</button></div>
+        <div class="update-v16-actions"><button id="updateLaterBtn" class="secondary" type="button">Để sau</button><button id="installUpdateBtn" class="primary" type="button" hidden>Tải bản cập nhật</button></div>
       </section>`;
     document.body.append(modal);
     $('closeUpdateManagerV16').addEventListener('click', closeModal);
     $('updateLaterBtn').addEventListener('click', closeModal);
     modal.addEventListener('click', (event) => { if (event.target === modal && !installing) closeModal(); });
-    $('openUpdateReleaseBtn').addEventListener('click', async () => {
-      const url = latestResult?.releaseUrl || latestResult?.releasesUrl;
-      await window.studio.openUpdateRelease(url);
-    });
     $('installUpdateBtn').addEventListener('click', installLatestUpdate);
   }
 
@@ -93,33 +89,29 @@
     $('updateCurrentVersion').textContent = result.currentVersion || '—';
     $('updateLatestVersion').textContent = result.latestVersion || 'Chưa có release';
     const notes = $('updateReleaseNotes');
-    const openButton = $('openUpdateReleaseBtn');
     const installButton = $('installUpdateBtn');
     $('updateDownloadProgress').hidden = true;
 
     if (result.updateAvailable) {
       setStatus(result.asset
-        ? `Có bản ${result.latestVersion}. Gói phù hợp: ${result.asset.name}.`
-        : `Có bản ${result.latestVersion}. Release chưa có bộ cài phù hợp cho máy này.`, 'success');
+        ? `Có bản ${result.latestVersion}. Ứng dụng sẽ tải đúng bộ cài ${result.asset.name}.`
+        : `Có bản ${result.latestVersion}, nhưng chưa có bộ cài phù hợp cho máy này.`, result.asset ? 'success' : 'warning');
       notes.hidden = !result.notes;
       notes.textContent = result.notes || '';
-      openButton.hidden = false;
-      installButton.hidden = !(result.platform === 'win32' && result.asset);
-      installButton.textContent = 'Tải và cài đặt';
-      openButton.textContent = result.platform === 'darwin' ? 'Mở GitHub Releases' : 'Mở trang tải bản mới';
+      installButton.hidden = !result.asset;
+      installButton.textContent = result.platform === 'darwin' ? 'Tải và mở bộ cài' : 'Tải và cài đặt';
       showModal();
       return;
     }
 
     setStatus(result.reason || `Bạn đang dùng phiên bản mới nhất (${result.currentVersion}).`);
     notes.hidden = true;
-    openButton.hidden = true;
     installButton.hidden = true;
     if (manual) showModal();
   }
 
   async function installLatestUpdate() {
-    if (installing || !latestResult?.updateAvailable) return;
+    if (installing || !latestResult?.updateAvailable || !latestResult?.asset) return;
     const blockers = await currentBusyState();
     if (blockers.busy || blockers.productionBusy) {
       setStatus('Đang có job xử lý. Hãy chờ hoàn tất hoặc hủy job trước khi cập nhật.', 'warning');
@@ -135,8 +127,7 @@
     try {
       await window.studio.installUpdate({
         busy: blockers.busy,
-        productionBusy: blockers.productionBusy,
-        releaseUrl: latestResult.releaseUrl
+        productionBusy: blockers.productionBusy
       });
     } catch (error) {
       installing = false;
@@ -157,7 +148,7 @@
     }
     if (manual) {
       showModal();
-      setStatus('Đang kết nối GitHub Releases...');
+      setStatus('Đang kiểm tra phiên bản mới...');
     }
     try {
       renderResult(await window.studio.checkForUpdates(), manual);
@@ -165,7 +156,6 @@
       if (manual) {
         setStatus(error.message || String(error), 'error');
         $('updateReleaseNotes').hidden = true;
-        $('openUpdateReleaseBtn').hidden = true;
         $('installUpdateBtn').hidden = true;
       } else {
         console.warn('Update check:', error);
