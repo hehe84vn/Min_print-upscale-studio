@@ -48,10 +48,11 @@ function registerUpdateManagerIpc() {
   registered = true;
 
   ipcMain.handle('update:check', async (event) => {
+    const currentVersion = app.getVersion();
     if (!pendingCheck) {
-      const report = (progress) => sendToSender(event, 'update:check-progress', progress);
+      const report = (progress) => sendToSender(event, 'update:check-progress', { currentVersion, ...progress });
       const operation = checkForUpdates({
-        currentVersion: app.getVersion(),
+        currentVersion,
         platform: process.platform,
         arch: process.arch,
         onProgress: report
@@ -67,6 +68,7 @@ function registerUpdateManagerIpc() {
     } else {
       sendToSender(event, 'update:check-progress', {
         phase: 'waiting',
+        currentVersion,
         message: 'Đang chờ lần kiểm tra hiện tại hoàn tất...'
       });
     }
