@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version without v prefix, for example 3.0.0
+        description: Version without v prefix, for example 3.0.1
         required: true
-        default: 3.0.0
+        default: 3.0.1
         type: string
       source_ref:
         description: Branch or commit containing the version to release
@@ -15,11 +15,12 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   RELEASE_VERSION: ${{ inputs.version }}
   SOURCE_REF: ${{ inputs.source_ref }}
+  DOWNLOAD_REPOSITORY: hehe84vn/Print-Upscale-Studio-Downloads
   AUTOTRACE_UPSTREAM_COMMIT: 74c796282474f33553265abbef4fc340b18c0593
   HOMEBREW_NO_AUTO_UPDATE: 1
 
@@ -108,7 +109,6 @@ jobs:
         run: npm run dist:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
           name: Print-Upscale-Studio-${{ env.RELEASE_VERSION }}-windows-x64
@@ -138,7 +138,6 @@ jobs:
         run: npm run dist:mac:arm64
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
           name: Print-Upscale-Studio-${{ env.RELEASE_VERSION }}-macos-arm64
@@ -168,7 +167,6 @@ jobs:
         run: npm run dist:mac:x64
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
           name: Print-Upscale-Studio-${{ env.RELEASE_VERSION }}-macos-x64
@@ -185,24 +183,26 @@ jobs:
           merge-multiple: true
       - name: List release assets
         run: find release-assets -type f -print
-      - name: Create stable GitHub Release
+      - name: Verify download repository token
         env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          DOWNLOAD_REPO_TOKEN: ${{ secrets.DOWNLOAD_REPO_TOKEN }}
+        run: test -n "$DOWNLOAD_REPO_TOKEN" || { echo "Missing DOWNLOAD_REPO_TOKEN secret"; exit 1; }
+      - name: Create release in download repository
+        env:
+          GH_TOKEN: ${{ secrets.DOWNLOAD_REPO_TOKEN }}
         shell: bash
         run: |
           TAG="v${RELEASE_VERSION}"
-          mapfile -d '' ASSETS < <(find release-assets -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.yml' \) -print0)
-          test "${#ASSETS[@]}" -gt 0 || { echo "No release assets found"; exit 1; }
-          printf 'Uploading release asset: %s\n' "${ASSETS[@]}"
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; uploading/replacing assets."
-            gh release upload "$TAG" "${ASSETS[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          mapfile -d '' ASSETS < <(find release-assets -type f \( -name '*setup.exe' -o -name '*.dmg' \) -print0)
+          test "${#ASSETS[@]}" -gt 0 || { echo "No public installer assets found"; exit 1; }
+          printf 'Uploading public installer: %s\n' "${ASSETS[@]}"
+          if gh release view "$TAG" --repo "$DOWNLOAD_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --repo "$DOWNLOAD_REPOSITORY" --clobber
           else
             gh release create "$TAG" "${ASSETS[@]}" \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$SOURCE_SHA" \
+              --repo "$DOWNLOAD_REPOSITORY" \
+              --target main \
               --title "Print Upscale Studio V${RELEASE_VERSION}" \
-              --generate-notes \
+              --notes "Stable installers for Print Upscale Studio V${RELEASE_VERSION}." \
               --latest
           fi
