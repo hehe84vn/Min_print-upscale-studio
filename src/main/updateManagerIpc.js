@@ -3,7 +3,7 @@
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { app, ipcMain, shell, BrowserWindow } = require('electron');
-const { checkForUpdates, downloadAsset, RELEASES_URL } = require('./services/updateManagerService');
+const { checkForUpdates, downloadAsset } = require('./services/updateManagerService');
 
 let registered = false;
 let pendingCheck = null;
@@ -48,8 +48,8 @@ function registerUpdateManagerIpc() {
     pendingInstall = (async () => {
       const latest = await checkForUpdates({ currentVersion: app.getVersion(), platform: process.platform, arch: process.arch });
       if (!latest.updateAvailable) throw new Error('Không có phiên bản mới hơn để tải.');
-      if (!latest.asset?.downloadUrl) throw new Error('Release chưa có bộ cài phù hợp cho máy này.');
-      broadcast('update:progress', { phase: 'downloading', percent: 0, message: `Đang tải ${latest.asset.name}` });
+      if (!latest.asset?.downloadUrl) throw new Error('Chưa có bộ cài phù hợp cho máy này.');
+      broadcast('update:progress', { phase: 'downloading', percent: 0, message: 'Đang tải bản cập nhật...' });
       const downloaded = await downloadAsset({
         asset: latest.asset,
         destinationDirectory: path.join(app.getPath('downloads'), 'Print Upscale Studio Updates'),
@@ -62,16 +62,17 @@ function registerUpdateManagerIpc() {
       assertInstallAllowed(payload);
 
       if (process.platform === 'win32') {
-        broadcast('update:progress', { phase: 'launching', percent: 100, message: 'Đang mở bộ cài và đóng ứng dụng...' });
+        broadcast('update:progress', { phase: 'launching', percent: 100, message: 'Đang mở trình cài đặt và đóng ứng dụng...' });
         await launchWindowsInstaller(downloaded.filePath);
         setTimeout(() => app.quit(), 450);
         return { launched: true, latestVersion: latest.latestVersion, ...downloaded };
       }
 
       if (process.platform === 'darwin') {
-        broadcast('update:progress', { phase: 'downloaded', percent: 100, message: 'Đã tải DMG. Hãy mở file và cài đè ứng dụng.' });
+        broadcast('update:progress', { phase: 'downloaded', percent: 100, message: 'Đã tải xong. Đang mở bộ cài...' });
         const openError = await shell.openPath(downloaded.filePath);
-        return { downloaded: true, opened: !openError, openError: openError || null, latestVersion: latest.latestVersion, ...downloaded };
+        if (openError) throw new Error('Không thể mở bộ cài. Hãy thử lại hoặc kiểm tra thư mục Tải về.');
+        return { downloaded: true, opened: true, latestVersion: latest.latestVersion, ...downloaded };
       }
 
       await shell.showItemInFolder(downloaded.filePath);
@@ -79,12 +80,6 @@ function registerUpdateManagerIpc() {
     })().finally(() => { pendingInstall = null; });
 
     return pendingInstall;
-  });
-
-  ipcMain.handle('update:open-release', async (_event, url) => {
-    const target = typeof url === 'string' && /^https:\/\/github\.com\//i.test(url) ? url : RELEASES_URL;
-    await shell.openExternal(target);
-    return { opened: true, url: target };
   });
 }
 
