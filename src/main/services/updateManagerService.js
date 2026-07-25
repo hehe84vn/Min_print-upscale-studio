@@ -31,7 +31,13 @@ function compareVersions(left, right) {
   return 0;
 }
 
-function requestJson(url, timeoutMs = 12000) {
+function emitProgress(onProgress, payload) {
+  try { onProgress?.(payload); } catch { /* progress reporting must never break update checks */ }
+}
+
+function requestJson(url, timeoutMs = 12000, onProgress) {
+  emitProgress(onProgress, { phase: 'connecting', message: 'Đang kết nối máy chủ cập nhật...' });
+  console.info('[update] request-start');
   return new Promise((resolve, reject) => {
     const request = https.get(url, {
       headers: {
@@ -40,6 +46,12 @@ function requestJson(url, timeoutMs = 12000) {
         'X-GitHub-Api-Version': '2022-11-28'
       }
     }, (response) => {
+      emitProgress(onProgress, {
+        phase: 'connected',
+        statusCode: response.statusCode || null,
+        message: 'Đã kết nối. Đang đọc thông tin phiên bản...'
+      });
+      console.info(`[update] response-status=${response.statusCode || 'unknown'}`);
       let raw = '';
       response.setEncoding('utf8');
       response.on('data', (chunk) => { raw += chunk; });
@@ -151,9 +163,11 @@ async function downloadAsset({ asset, destinationDirectory, onProgress, timeoutM
   }
 }
 
-async function checkForUpdates({ currentVersion, platform = process.platform, arch = process.arch } = {}) {
-  const release = await requestJson(API_URL);
+async function checkForUpdates({ currentVersion, platform = process.platform, arch = process.arch, onProgress } = {}) {
+  const release = await requestJson(API_URL, 12000, onProgress);
   if (!release || release.draft || release.prerelease) {
+    emitProgress(onProgress, { phase: 'completed', latestVersion: null, message: 'Đã kết nối. Chưa có bản cập nhật ổn định.' });
+    console.info('[update] result=no-stable-release');
     return {
       checked: true,
       updateAvailable: false,
@@ -164,8 +178,29 @@ async function checkForUpdates({ currentVersion, platform = process.platform, ar
   }
 
   const latestVersion = String(release.tag_name || release.name || '').replace(/^v/i, '');
+  emitProgress(onProgress, {
+    phase: 'release_received',
+    latestVersion,
+    message: `Đã nhận thông tin phiên bản ${latestVersion}. Đang kiểm tra bộ cài...`
+  });
+  console.info(`[update] tag=v${latestVersion}`);
   const updateAvailable = compareVersions(latestVersion, currentVersion) > 0;
   const asset = assetForPlatform(release, platform, arch);
+  emitProgress(onProgress, {
+    phase: asset ? 'asset_matched' : 'asset_missing',
+    latestVersion,
+    assetMatched: Boolean(asset),
+    message: asset ? 'Đã tìm thấy bộ cài phù hợp cho máy này.' : 'Chưa có bộ cài phù hợp cho máy này.'
+  });
+  emitProgress(onProgress, {
+    phase: 'completed',
+    currentVersion,
+    latestVersion,
+    updateAvailable,
+    assetMatched: Boolean(asset),
+    message: 'Đã hoàn tất kiểm tra phiên bản.'
+  });
+  console.info(`[update] current=${currentVersion} latest=${latestVersion} asset=${asset ? 'matched' : 'missing'} result=${updateAvailable ? 'available' : 'current'}`);
   return {
     checked: true,
     updateAvailable,
