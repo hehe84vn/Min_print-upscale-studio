@@ -25,6 +25,10 @@ function broadcast(channel, payload) {
   }
 }
 
+function sendToSender(event, channel, payload) {
+  if (!event?.sender?.isDestroyed?.()) event.sender.send(channel, payload);
+}
+
 function assertInstallAllowed(payload = {}) {
   if (payload.busy === true || payload.productionBusy === true) {
     throw new Error('Đang có job xử lý. Hãy chờ hoàn tất hoặc hủy job trước khi cập nhật.');
@@ -43,18 +47,28 @@ function registerUpdateManagerIpc() {
   if (registered) return;
   registered = true;
 
-  ipcMain.handle('update:check', async () => {
+  ipcMain.handle('update:check', async (event) => {
     if (!pendingCheck) {
+      const report = (progress) => sendToSender(event, 'update:check-progress', progress);
       const operation = checkForUpdates({
         currentVersion: app.getVersion(),
         platform: process.platform,
-        arch: process.arch
+        arch: process.arch,
+        onProgress: report
       });
       pendingCheck = withTimeout(
         operation,
         18000,
         'Không thể kết nối máy chủ cập nhật. Hãy kiểm tra Internet và thử lại.'
-      ).finally(() => { pendingCheck = null; });
+      ).catch((error) => {
+        report({ phase: 'failed', message: error.message || 'Không thể kiểm tra cập nhật.' });
+        throw error;
+      }).finally(() => { pendingCheck = null; });
+    } else {
+      sendToSender(event, 'update:check-progress', {
+        phase: 'waiting',
+        message: 'Đang chờ lần kiểm tra hiện tại hoàn tất...'
+      });
     }
     return pendingCheck;
   });
