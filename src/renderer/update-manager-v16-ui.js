@@ -46,7 +46,7 @@
     modal.hidden = true;
     modal.innerHTML = `
       <section class="update-v16-card" role="dialog" aria-modal="true" aria-labelledby="updateManagerV16Title">
-        <div class="update-v16-head"><div><div class="update-v16-kicker">UPDATE MANAGER</div><h2 id="updateManagerV16Title">Cập nhật Print Upscale Studio</h2></div><button id="closeUpdateManagerV16" class="update-v16-close" type="button" aria-label="Đóng">×</button></div>
+        <div class="update-v16-head"><div><div class="update-v16-kicker">CẬP NHẬT ỨNG DỤNG</div><h2 id="updateManagerV16Title">Cập nhật Print Upscale Studio</h2></div><button id="closeUpdateManagerV16" class="update-v16-close" type="button" aria-label="Đóng">×</button></div>
         <div class="update-v16-version"><div><small>PHIÊN BẢN ĐANG DÙNG</small><strong id="updateCurrentVersion">—</strong></div><div><small>PHIÊN BẢN MỚI NHẤT</small><strong id="updateLatestVersion">—</strong></div></div>
         <div id="updateManagerV16Status" class="update-v16-status">Đang kiểm tra...</div>
         <div id="updateDownloadProgress" class="update-v16-progress" hidden><span></span></div>
@@ -87,15 +87,15 @@
   function renderResult(result, manual) {
     latestResult = result;
     $('updateCurrentVersion').textContent = result.currentVersion || '—';
-    $('updateLatestVersion').textContent = result.latestVersion || 'Chưa có release';
+    $('updateLatestVersion').textContent = result.latestVersion || 'Chưa có bản mới';
     const notes = $('updateReleaseNotes');
     const installButton = $('installUpdateBtn');
     $('updateDownloadProgress').hidden = true;
 
     if (result.updateAvailable) {
       setStatus(result.asset
-        ? `Có bản ${result.latestVersion}. Ứng dụng sẽ tải đúng bộ cài ${result.asset.name}.`
-        : `Có bản ${result.latestVersion}, nhưng chưa có bộ cài phù hợp cho máy này.`, result.asset ? 'success' : 'warning');
+        ? `Phiên bản ${result.latestVersion} đã sẵn sàng. Ứng dụng sẽ tự tải đúng bộ cài cho máy này.`
+        : `Phiên bản ${result.latestVersion} đã có, nhưng chưa hỗ trợ thiết bị này.`, result.asset ? 'success' : 'warning');
       notes.hidden = !result.notes;
       notes.textContent = result.notes || '';
       installButton.hidden = !result.asset;
@@ -123,7 +123,7 @@
     $('updateLaterBtn').disabled = true;
     $('closeUpdateManagerV16').disabled = true;
     $('updateDownloadProgress').hidden = false;
-    setStatus('Đang chuẩn bị tải bộ cài...');
+    setStatus('Đang chuẩn bị tải bản cập nhật...');
     try {
       await window.studio.installUpdate({
         busy: blockers.busy,
@@ -134,7 +134,7 @@
       $('installUpdateBtn').disabled = false;
       $('updateLaterBtn').disabled = false;
       $('closeUpdateManagerV16').disabled = false;
-      setStatus(error.message || String(error), 'error');
+      setStatus(error.message || 'Không thể hoàn tất cập nhật. Hãy thử lại.', 'error');
     }
   }
 
@@ -154,11 +154,11 @@
       renderResult(await window.studio.checkForUpdates(), manual);
     } catch (error) {
       if (manual) {
-        setStatus(error.message || String(error), 'error');
+        setStatus(error.message || 'Không thể kiểm tra cập nhật. Hãy thử lại.', 'error');
         $('updateReleaseNotes').hidden = true;
         $('installUpdateBtn').hidden = true;
       } else {
-        console.warn('Update check:', error);
+        console.warn('Update check failed');
       }
     } finally {
       checking = false;
