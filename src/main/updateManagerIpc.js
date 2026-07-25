@@ -9,6 +9,16 @@ let registered = false;
 let pendingCheck = null;
 let pendingInstall = null;
 
+function withTimeout(promise, timeoutMs, message) {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 function broadcast(channel, payload) {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send(channel, payload);
@@ -35,8 +45,16 @@ function registerUpdateManagerIpc() {
 
   ipcMain.handle('update:check', async () => {
     if (!pendingCheck) {
-      pendingCheck = checkForUpdates({ currentVersion: app.getVersion(), platform: process.platform, arch: process.arch })
-        .finally(() => { pendingCheck = null; });
+      const operation = checkForUpdates({
+        currentVersion: app.getVersion(),
+        platform: process.platform,
+        arch: process.arch
+      });
+      pendingCheck = withTimeout(
+        operation,
+        18000,
+        'Không thể kết nối máy chủ cập nhật. Hãy kiểm tra Internet và thử lại.'
+      ).finally(() => { pendingCheck = null; });
     }
     return pendingCheck;
   });
@@ -46,7 +64,11 @@ function registerUpdateManagerIpc() {
     if (pendingInstall) return pendingInstall;
 
     pendingInstall = (async () => {
-      const latest = await checkForUpdates({ currentVersion: app.getVersion(), platform: process.platform, arch: process.arch });
+      const latest = await withTimeout(
+        checkForUpdates({ currentVersion: app.getVersion(), platform: process.platform, arch: process.arch }),
+        18000,
+        'Không thể kết nối máy chủ cập nhật. Hãy kiểm tra Internet và thử lại.'
+      );
       if (!latest.updateAvailable) throw new Error('Không có phiên bản mới hơn để tải.');
       if (!latest.asset?.downloadUrl) throw new Error('Chưa có bộ cài phù hợp cho máy này.');
       broadcast('update:progress', { phase: 'downloading', percent: 0, message: 'Đang tải bản cập nhật...' });
@@ -85,4 +107,4 @@ function registerUpdateManagerIpc() {
 
 app.whenReady().then(registerUpdateManagerIpc);
 
-module.exports = { assertInstallAllowed, launchWindowsInstaller, registerUpdateManagerIpc };
+module.exports = { assertInstallAllowed, launchWindowsInstaller, registerUpdateManagerIpc, withTimeout };
