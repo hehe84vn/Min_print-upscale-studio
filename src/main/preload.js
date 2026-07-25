@@ -22,7 +22,6 @@ contextBridge.exposeInMainWorld('studio', {
   runModelStudioPreview: (payload) => ipcRenderer.invoke('model-studio:preview', payload),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdate: (payload) => ipcRenderer.invoke('update:install', payload),
-  openUpdateRelease: (url) => ipcRenderer.invoke('update:open-release', url),
   getColorSettings: () => ipcRenderer.invoke('color:settings:get'),
   saveColorSettings: (payload) => ipcRenderer.invoke('color:settings:save', payload),
   selectIccProfile: () => ipcRenderer.invoke('color:select-profile'),
