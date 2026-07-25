@@ -5,7 +5,7 @@ const workflow = fs.readFileSync(new URL('../.github/workflows/release.yml', imp
 const packageJson = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const updateService = fs.readFileSync(new URL('../src/main/services/updateManagerService.js', import.meta.url), 'utf8');
 
-assert.equal(packageJson.version, '3.0.1');
+assert.equal(packageJson.version, '3.0.2');
 assert.match(workflow, /workflow_dispatch:/);
 assert.match(workflow, /version:/);
 assert.match(workflow, /push:\s*\n\s*tags:/);
@@ -17,5 +17,7 @@ assert.match(workflow, /target_commitish: \$\{\{ github\.sha \}\}/);
 assert.match(workflow, /make_latest: true/);
 assert.match(workflow, /softprops\/action-gh-release@v2/);
 assert.match(updateService, /Print-Upscale-Studio-Downloads/);
+assert.doesNotMatch(updateService, /releaseUrl:/);
+assert.doesNotMatch(updateService, /releasesUrl:/);
 
 console.log('Release and Auto Update Validation V20 smoke test passed.');

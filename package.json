@@ -1,6 +1,6 @@
 {
   "name": "print-upscale-studio",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "Self-contained multi-engine vector workflow: Potrace for monochrome artwork, VTracer spline and bundled AutoTrace candidates for flat-color artwork, with curve, palette, fidelity and edge quality gates plus explicit fallback reporting.",
   "main": "src/main/bootstrap.js",
   "author": "ngoctunguyenle@gmail.com",
