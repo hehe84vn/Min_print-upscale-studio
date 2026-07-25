@@ -8,7 +8,6 @@ const crypto = require('node:crypto');
 
 const OWNER = 'hehe84vn';
 const REPOSITORY = 'Print-Upscale-Studio-Downloads';
-const RELEASES_URL = `https://github.com/${OWNER}/${REPOSITORY}/releases`;
 const API_URL = `https://api.github.com/repos/${OWNER}/${REPOSITORY}/releases/latest`;
 
 function normalizeVersion(value) {
@@ -54,7 +53,7 @@ function requestJson(url, timeoutMs = 12000) {
       });
     });
     request.setTimeout(timeoutMs, () => request.destroy(new Error('Kiểm tra cập nhật quá thời gian.')));
-    request.on('error', reject);
+    request.on('error', () => reject(new Error('Không thể kết nối máy chủ cập nhật. Hãy kiểm tra Internet và thử lại.')));
   });
 }
 
@@ -108,7 +107,7 @@ function downloadResponse(url, options, redirects = 0) {
       resolve(response);
     });
     request.setTimeout(options.timeoutMs || 30000, () => request.destroy(new Error('Tải bộ cài quá thời gian.')));
-    request.on('error', reject);
+    request.on('error', () => reject(new Error('Mất kết nối khi tải bản cập nhật. Hãy thử lại.')));
   });
 }
 
@@ -140,7 +139,7 @@ async function downloadAsset({ asset, destinationDirectory, onProgress, timeoutM
 
     const actualSha256 = hash.digest('hex');
     const expected = expectedSha256(asset);
-    if (expected && expected !== actualSha256) throw new Error('Checksum SHA-256 của bộ cài không khớp. Đã hủy cập nhật.');
+    if (expected && expected !== actualSha256) throw new Error('Bộ cài tải về không vượt qua kiểm tra toàn vẹn. Đã hủy cập nhật.');
     await fsp.rm(finalPath, { force: true });
     await fsp.rename(partialPath, finalPath);
     onProgress?.({ received, total, percent: 100 });
@@ -160,7 +159,6 @@ async function checkForUpdates({ currentVersion, platform = process.platform, ar
       updateAvailable: false,
       currentVersion,
       latestVersion: null,
-      releasesUrl: RELEASES_URL,
       reason: 'Chưa có bản cập nhật ổn định.'
     };
   }
@@ -173,11 +171,9 @@ async function checkForUpdates({ currentVersion, platform = process.platform, ar
     updateAvailable,
     currentVersion,
     latestVersion,
-    title: release.name || `Version ${latestVersion}`,
+    title: `Print Upscale Studio ${latestVersion}`,
     notes: String(release.body || '').slice(0, 12000),
     publishedAt: release.published_at || null,
-    releaseUrl: release.html_url || RELEASES_URL,
-    releasesUrl: RELEASES_URL,
     asset: asset ? {
       name: asset.name,
       size: asset.size,
@@ -191,7 +187,6 @@ async function checkForUpdates({ currentVersion, platform = process.platform, ar
 
 module.exports = {
   API_URL,
-  RELEASES_URL,
   normalizeVersion,
   compareVersions,
   assetForPlatform,
