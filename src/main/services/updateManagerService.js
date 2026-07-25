@@ -7,7 +7,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 const OWNER = 'hehe84vn';
-const REPOSITORY = 'Min_print-upscale-studio';
+const REPOSITORY = 'Print-Upscale-Studio-Downloads';
 const RELEASES_URL = `https://github.com/${OWNER}/${REPOSITORY}/releases`;
 const API_URL = `https://api.github.com/repos/${OWNER}/${REPOSITORY}/releases/latest`;
 
@@ -47,10 +47,10 @@ function requestJson(url, timeoutMs = 12000) {
       response.on('end', () => {
         if (response.statusCode === 404) return resolve(null);
         if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
-          return reject(new Error(`GitHub Releases trả về HTTP ${response.statusCode || 'unknown'}.`));
+          return reject(new Error(`Máy chủ cập nhật trả về HTTP ${response.statusCode || 'unknown'}.`));
         }
         try { return resolve(JSON.parse(raw)); }
-        catch { return reject(new Error('Không đọc được dữ liệu cập nhật từ GitHub Releases.')); }
+        catch { return reject(new Error('Không đọc được dữ liệu cập nhật.')); }
       });
     });
     request.setTimeout(timeoutMs, () => request.destroy(new Error('Kiểm tra cập nhật quá thời gian.')));
@@ -62,14 +62,13 @@ function assetForPlatform(release, platform, arch) {
   const assets = Array.isArray(release?.assets) ? release.assets : [];
   const names = assets.map((asset) => ({ ...asset, lower: String(asset.name || '').toLowerCase() }));
   if (platform === 'win32') {
-    return names.find((asset) => asset.lower.endsWith('.exe') && !asset.lower.includes('portable'))
-      || names.find((asset) => asset.lower.endsWith('.exe'))
+    return names.find((asset) => asset.lower.endsWith('setup.exe'))
+      || names.find((asset) => asset.lower.endsWith('.exe') && !asset.lower.includes('portable'))
       || null;
   }
   if (platform === 'darwin') {
     const archToken = arch === 'arm64' ? 'arm64' : 'x64';
     return names.find((asset) => asset.lower.endsWith('.dmg') && asset.lower.includes(archToken))
-      || names.find((asset) => asset.lower.endsWith('.dmg'))
       || null;
   }
   return null;
@@ -87,7 +86,7 @@ function expectedSha256(asset) {
 }
 
 function downloadResponse(url, options, redirects = 0) {
-  if (redirects > 6) return Promise.reject(new Error('GitHub chuyển hướng tải xuống quá nhiều lần.'));
+  if (redirects > 6) return Promise.reject(new Error('Máy chủ chuyển hướng tải xuống quá nhiều lần.'));
   return new Promise((resolve, reject) => {
     const request = https.get(url, {
       headers: {
@@ -114,7 +113,7 @@ function downloadResponse(url, options, redirects = 0) {
 }
 
 async function downloadAsset({ asset, destinationDirectory, onProgress, timeoutMs = 30000 }) {
-  if (!asset?.downloadUrl || !/^https:\/\//i.test(asset.downloadUrl)) throw new Error('Release không có đường dẫn tải hợp lệ.');
+  if (!asset?.downloadUrl || !/^https:\/\//i.test(asset.downloadUrl)) throw new Error('Bản cập nhật không có đường dẫn tải hợp lệ.');
   await fsp.mkdir(destinationDirectory, { recursive: true });
   const finalPath = path.join(destinationDirectory, safeAssetName(asset.name));
   const partialPath = `${finalPath}.partial`;
@@ -162,7 +161,7 @@ async function checkForUpdates({ currentVersion, platform = process.platform, ar
       currentVersion,
       latestVersion: null,
       releasesUrl: RELEASES_URL,
-      reason: 'Chưa có bản phát hành ổn định trên GitHub Releases.'
+      reason: 'Chưa có bản cập nhật ổn định.'
     };
   }
 
