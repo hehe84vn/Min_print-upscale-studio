@@ -114,7 +114,7 @@
       return;
     }
 
-    setStatus(result.reason || `Bạn đang dùng phiên bản mới nhất (${result.currentVersion}).`);
+    setStatus(result.reason || `Bạn đang dùng phiên bản mới nhất (${result.currentVersion}).`, 'success');
     notes.hidden = true;
     installButton.hidden = true;
     if (manual) showModal();
@@ -159,7 +159,7 @@
     if (checking) {
       if (manual) {
         showModal();
-        setStatus('Đang kiểm tra phiên bản mới...');
+        setStatus('Đang chờ lần kiểm tra hiện tại hoàn tất...');
       }
       return;
     }
@@ -172,7 +172,7 @@
     }
     if (manual) {
       showModal();
-      setStatus('Đang kiểm tra phiên bản mới...');
+      setStatus('Đang kết nối máy chủ cập nhật...');
     }
     try {
       const result = await withTimeout(
@@ -183,8 +183,6 @@
       renderResult(result, manual);
     } catch (error) {
       if (manual) {
-        $('updateCurrentVersion').textContent = '—';
-        $('updateLatestVersion').textContent = '—';
         setStatus(error.message || 'Không thể kiểm tra cập nhật. Hãy thử lại.', 'error');
         $('updateReleaseNotes').hidden = true;
         $('installUpdateBtn').hidden = true;
@@ -198,6 +196,20 @@
         button.lastElementChild.textContent = 'Kiểm tra cập nhật';
       }
     }
+  }
+
+  function installCheckProgressListener() {
+    if (!window.studio?.onUpdateCheckProgress) return;
+    window.studio.onUpdateCheckProgress((progress = {}) => {
+      if (progress.currentVersion) $('updateCurrentVersion').textContent = progress.currentVersion;
+      if (progress.latestVersion) $('updateLatestVersion').textContent = progress.latestVersion;
+      if (checking && !$('updateManagerV16Modal').hidden) {
+        const type = progress.phase === 'failed' ? 'error'
+          : progress.phase === 'asset_missing' ? 'warning'
+            : ['connected', 'release_received', 'asset_matched', 'completed'].includes(progress.phase) ? 'success' : '';
+        setStatus(progress.message || 'Đang kiểm tra phiên bản mới...', type);
+      }
+    });
   }
 
   function installProgressListener() {
@@ -214,6 +226,7 @@
   installStyles();
   installButton();
   installModal();
+  installCheckProgressListener();
   installProgressListener();
   window.setTimeout(() => checkForUpdates({ manual: false }), 7000);
 })();
