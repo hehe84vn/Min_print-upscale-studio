@@ -4,6 +4,16 @@
   let checking = false;
   let installing = false;
 
+  function withTimeout(promise, timeoutMs, message) {
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+      timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+      if (timer) window.clearTimeout(timer);
+    });
+  }
+
   function installStyles() {
     if ($('updateManagerV16Styles')) return;
     const style = document.createElement('style');
@@ -139,7 +149,21 @@
   }
 
   async function checkForUpdates({ manual = false } = {}) {
-    if (checking || !window.studio?.checkForUpdates) return;
+    if (!window.studio?.checkForUpdates) {
+      if (manual) {
+        showModal();
+        setStatus('Chức năng kiểm tra cập nhật chưa sẵn sàng. Hãy khởi động lại ứng dụng.', 'error');
+      }
+      return;
+    }
+    if (checking) {
+      if (manual) {
+        showModal();
+        setStatus('Đang kiểm tra phiên bản mới...');
+      }
+      return;
+    }
+
     checking = true;
     const button = $('checkForUpdatesBtn');
     if (button) {
@@ -151,9 +175,16 @@
       setStatus('Đang kiểm tra phiên bản mới...');
     }
     try {
-      renderResult(await window.studio.checkForUpdates(), manual);
+      const result = await withTimeout(
+        window.studio.checkForUpdates(),
+        22000,
+        'Kiểm tra cập nhật quá thời gian. Hãy kiểm tra Internet và thử lại.'
+      );
+      renderResult(result, manual);
     } catch (error) {
       if (manual) {
+        $('updateCurrentVersion').textContent = '—';
+        $('updateLatestVersion').textContent = '—';
         setStatus(error.message || 'Không thể kiểm tra cập nhật. Hãy thử lại.', 'error');
         $('updateReleaseNotes').hidden = true;
         $('installUpdateBtn').hidden = true;
