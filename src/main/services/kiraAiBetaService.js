@@ -4,20 +4,13 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const API_BASE = 'https://kiraai.vn/api/v1';
-const ENDPOINT = '/chat/completions';
+const ENDPOINT = '/images/generations';
 const SECRET_NAME = 'kiraAiApiKey';
 const MODELS = Object.freeze({
   'kira-3.0-image': { label: 'Kira 3.0 Image' },
   'kira-2.0-image': { label: 'Kira 2.0 Image' }
 });
-
-function mimeFor(filePath) {
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
-  if (ext === '.webp') return 'image/webp';
-  if (ext === '.tif' || ext === '.tiff') return 'image/tiff';
-  return 'image/png';
-}
+const ALLOWED_ASPECT_RATIOS = new Set(['1:1', '16:9', '9:16', '4:3', '3:4']);
 
 async function fetchWithTimeout(url, init = {}, timeoutMs = 180000) {
   const controller = new AbortController();
@@ -42,7 +35,7 @@ async function requireApiKey(secrets) {
 async function getStatus(secrets) {
   try {
     const status = await secrets.status(SECRET_NAME);
-    return { beta: true, configured: status.configured, suffix: status.suffix, apiBase: API_BASE, models: Object.entries(MODELS).map(([id, item]) => ({ id, label: item.label })) };
+    return { beta: true, configured: status.configured, suffix: status.suffix, apiBase: API_BASE, endpoint: ENDPOINT, models: Object.entries(MODELS).map(([id, item]) => ({ id, label: item.label })) };
   } catch (error) {
     return { beta: true, configured: false, models: [], error: error.message };
   }
@@ -63,26 +56,36 @@ async function clearApiKey(secrets) {
 async function testConnection(secrets) {
   const apiKey = await requireApiKey(secrets);
   const response = await fetchWithTimeout(`${API_BASE}/models`, { headers: { Authorization: `Bearer ${apiKey}` } }, 30000);
-  if (response.status === 404 || response.status === 405) return { ok: true, provider: 'kiraai', beta: true, note: 'Endpoint models không được công bố; key sẽ được kiểm tra khi chạy ảnh.' };
   if (!response.ok) throw new Error(`KiraAI API: ${await readError(response)}`);
   return { ok: true, provider: 'kiraai', beta: true };
 }
 
+function normalizeAspectRatio(value) {
+  const ratio = String(value || '').trim();
+  return ALLOWED_ASPECT_RATIOS.has(ratio) ? ratio : '1:1';
+}
+
+function aspectRatioFromDimensions(width, height) {
+  const w = Number(width);
+  const h = Number(height);
+  if (!(w > 0 && h > 0)) return '1:1';
+  const ratio = w / h;
+  const candidates = [
+    ['1:1', 1],
+    ['16:9', 16 / 9],
+    ['9:16', 9 / 16],
+    ['4:3', 4 / 3],
+    ['3:4', 3 / 4]
+  ];
+  candidates.sort((a, b) => Math.abs(a[1] - ratio) - Math.abs(b[1] - ratio));
+  return candidates[0][0];
+}
+
 function extractOutput(payload) {
-  const direct = payload?.data?.[0]?.url || payload?.data?.[0]?.b64_json || payload?.image_url || payload?.url;
-  if (direct) return direct;
-  const content = payload?.choices?.[0]?.message?.content;
-  if (Array.isArray(content)) {
-    for (const part of content) {
-      const value = part?.image_url?.url || part?.image_url || part?.url || part?.b64_json || part?.text;
-      if (typeof value === 'string' && (value.startsWith('http') || value.startsWith('data:image/'))) return value;
-    }
-  }
-  if (typeof content === 'string') {
-    const match = content.match(/https?:\/\/[^\s)"']+|data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/);
-    if (match) return match[0];
-  }
-  throw new Error(`KiraAI không trả về ảnh kết quả theo định dạng đã biết: ${JSON.stringify(payload)}`);
+  const item = payload?.data?.[0];
+  const direct = item?.url || item?.b64_json || payload?.image_url || payload?.url;
+  if (typeof direct === 'string' && direct) return direct;
+  throw new Error(`KiraAI không trả về ảnh theo schema Images API: ${JSON.stringify(payload)}`);
 }
 
 async function writeOutput(source, outputPath) {
@@ -102,33 +105,28 @@ async function writeOutput(source, outputPath) {
 }
 
 async function enhance({ secureSecretsService, inputPath, outputPath, options = {}, onProgress }) {
-  if (!inputPath || !outputPath) throw new Error('Thiếu đường dẫn đầu vào hoặc đầu ra KiraAI.');
+  if (!outputPath) throw new Error('Thiếu đường dẫn đầu ra KiraAI.');
   const apiKey = await requireApiKey(secureSecretsService);
   const model = MODELS[options.modelId] ? options.modelId : 'kira-3.0-image';
-  const bytes = await fs.readFile(inputPath);
-  const imageDataUrl = `data:${mimeFor(inputPath)};base64,${bytes.toString('base64')}`;
-  const prompt = String(options.prompt || '').trim() || 'Enhance and upscale this image for professional print production. Preserve composition, identity, text, logos, geometry and original colors. Do not add or remove content.';
-  const sizeHint = options.scale ? `${Number(options.scale)}x` : 'highest practical resolution';
-  const payload = {
-    model,
-    messages: [{ role: 'user', content: [
-      { type: 'text', text: `${prompt}\nRequested output: ${sizeHint}. Return only the enhanced image.` },
-      { type: 'image_url', image_url: { url: imageDataUrl } }
-    ] }],
-    stream: false
-  };
-  onProgress?.({ status: 'uploading', message: 'Đang gửi ảnh tới KiraAI.vn...' });
+  const prompt = String(options.prompt || '').trim();
+  if (!prompt) {
+    throw new Error('KiraAI Images API yêu cầu prompt. Guide hiện tại chưa công bố tham số ảnh tham chiếu cho API, nên app không tự gửi file nguồn bằng schema suy đoán.');
+  }
+  const aspectRatio = normalizeAspectRatio(options.aspectRatio || aspectRatioFromDimensions(options.inputWidth, options.inputHeight));
+  const payload = { model, prompt, aspect_ratio: aspectRatio };
+
+  onProgress?.({ status: 'uploading', message: 'Đang gửi yêu cầu tạo ảnh tới KiraAI.vn...' });
   const response = await fetchWithTimeout(`${API_BASE}${ENDPOINT}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
   if (!response.ok) throw new Error(`KiraAI API: ${await readError(response)}`);
-  onProgress?.({ status: 'processing', message: 'KiraAI.vn đang xử lý ảnh...' });
+  onProgress?.({ status: 'processing', message: 'KiraAI.vn đang tạo ảnh...' });
   const data = await response.json();
   const source = extractOutput(data);
   await writeOutput(source, outputPath);
-  return { outputPath, modelId: model, modelLabel: MODELS[model].label, beta: true };
+  return { outputPath, modelId: model, modelLabel: MODELS[model].label, aspectRatio, endpoint: ENDPOINT, beta: true, referenceImageUsed: false };
 }
 
-module.exports = { API_BASE, ENDPOINT, MODELS, SECRET_NAME, clearApiKey, enhance, getStatus, saveApiKey, testConnection };
+module.exports = { API_BASE, ALLOWED_ASPECT_RATIOS, ENDPOINT, MODELS, SECRET_NAME, aspectRatioFromDimensions, clearApiKey, enhance, extractOutput, getStatus, normalizeAspectRatio, saveApiKey, testConnection };
