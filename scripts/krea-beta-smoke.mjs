@@ -24,8 +24,12 @@ assert.match(service, /\/generate\/enhance\/topaz\/standard-enhance/);
 assert.match(service, /\/generate\/enhance\/topaz\/generative-enhance/);
 assert.match(service, /\/generate\/enhance\/topaz\/bloom-enhance/);
 assert.match(service, /\/generate\/enhance\/krea\/enhance/);
+assert.match(service, /model: 'Standard V2'/);
+assert.match(service, /upscale_factor: scale/);
 assert.match(service, /subject_detection: 'All'/);
+assert.match(service, /face_enhancement_strength/);
 assert.match(service, /failure_reason/);
+assert.doesNotMatch(service, /upscaling_activated/);
 assert.doesNotMatch(service, /High Fidelity V2|Text Refine|Recovery V2/);
 assert.doesNotMatch(service, /apiKey\s*=\s*['"][A-Za-z0-9_-]{20,}/);
 
@@ -39,10 +43,11 @@ assert.match(ui, /runKreaAsProvider/);
 assert.match(loader, /loadScript\('krea-beta-ui\.js'\)/);
 
 assert.match(kiraService, /https:\/\/kiraai\.vn\/api\/v1/);
-assert.match(kiraService, /\/chat\/completions/);
+assert.match(kiraService, /\/images\/generations/);
 assert.match(kiraService, /kira-3\.0-image/);
 assert.match(kiraService, /kira-2\.0-image/);
-assert.match(kiraService, /image_url/);
+assert.match(kiraService, /aspect_ratio/);
+assert.doesNotMatch(kiraService, /\/chat\/completions/);
 assert.doesNotMatch(kiraService, /apiKey\s*=\s*['"][A-Za-z0-9_-]{20,}/);
 assert.match(kiraIpc, /kiraai-beta:enhance/);
 assert.match(bootstrap, /'kiraai-beta:enhance'/);
