@@ -97,8 +97,9 @@ function buildPayload(modelId, asset, options = {}) {
     sharpen: 0.5, denoise: 0.5, detail: 0.5
   });
   if (modelId === 'topaz-bloom') Object.assign(payload, {
-    model: 'Reimagine',
-    creativity: Math.round(clamp(options.creativity, 1, 9, 3)), face_preservation: Boolean(options.protectFace), color_preservation: options.preserveColor !== false
+    creativity: Math.round(clamp(options.creativity, 1, 9, 3)),
+    face_preservation: Boolean(options.protectFace),
+    color_preservation: options.preserveColor !== false
   });
   return Object.fromEntries(Object.entries(payload).filter(([, value]) => compact(value) !== undefined));
 }
