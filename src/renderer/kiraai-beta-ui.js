@@ -12,7 +12,7 @@
     card.className = 'krea-beta-settings-card';
     card.innerHTML = `
       <h3>KiraAI.vn Beta</h3>
-      <p>Nhà cung cấp AI hình ảnh độc lập qua API tương thích OpenAI. Luồng hiện tại dùng endpoint /api/v1/chat/completions và ảnh tham chiếu.</p>
+      <p>Dùng đúng Images API chính thức tại /api/v1/images/generations. Guide công khai hiện chỉ mô tả tạo ảnh từ prompt; chưa công bố trường ảnh tham chiếu cho API.</p>
       <div class="setting-group"><label for="kiraAiApiKeyInput">KiraAI API key</label><input id="kiraAiApiKeyInput" class="text-input" type="password" autocomplete="off" spellcheck="false" placeholder="Nhập API key KiraAI.vn" /><small id="kiraAiKeyStatus" class="krea-beta-status">Đang kiểm tra...</small></div>
       <div class="krea-beta-actions"><button id="saveKiraAiKeyBtn" class="primary" type="button">Lưu key</button><button id="testKiraAiKeyBtn" class="secondary" type="button">Kiểm tra kết nối</button><button id="clearKiraAiKeyBtn" class="danger-text" type="button">Xóa key</button></div>`;
     anchor.before(card);
@@ -23,7 +23,7 @@
     if (!select || select.querySelector('option[value="kiraai"]')) return;
     const option = document.createElement('option');
     option.value = 'kiraai';
-    option.textContent = 'KiraAI.vn Beta';
+    option.textContent = 'KiraAI.vn Beta · tạo ảnh';
     select.append(option);
   }
 
@@ -36,15 +36,26 @@
     }
   }
 
+  function ensureNotice() {
+    if ($id('kiraAiGenerationNotice')) return;
+    const modelGroup = $id('aiModelSelect')?.closest('.setting-group');
+    if (!modelGroup) return;
+    const notice = document.createElement('div');
+    notice.id = 'kiraAiGenerationNotice';
+    notice.className = 'krea-provider-note';
+    notice.hidden = true;
+    notice.textContent = 'KiraAI đang chạy theo Images API chính thức: tạo ảnh mới từ prompt và giữ tỷ lệ gần nhất với ảnh đầu vào. Chưa dùng ảnh đầu vào làm reference vì guide API chưa công bố trường này.';
+    modelGroup.insertAdjacentElement('afterend', notice);
+  }
+
   function syncUi() {
     const active = $id('jobProviderSelect')?.value === 'kiraai';
+    if ($id('kiraAiGenerationNotice')) $id('kiraAiGenerationNotice').hidden = !active;
     if (!active) return;
     renderModels();
-    const label = $id('aiSizeSetting')?.querySelector('label');
-    if (label) label.textContent = 'Mức tăng kích thước yêu cầu';
-    const size = $id('aiImageSize');
-    if (size) { size.innerHTML = '<option value="2">2× · test an toàn</option><option value="4">4× · yêu cầu cao</option>'; $id('aiSizeSetting').hidden = false; }
-    if ($id('runBtn') && typeof state !== 'undefined' && state.tool === 'ai-enhance') $id('runBtn').textContent = 'Tăng cường bằng KiraAI';
+    const sizeSetting = $id('aiSizeSetting');
+    if (sizeSetting) sizeSetting.hidden = true;
+    if ($id('runBtn') && typeof state !== 'undefined' && state.tool === 'ai-enhance') $id('runBtn').textContent = 'Tạo ảnh bằng KiraAI';
   }
 
   function showStatus(status, message, error = false) {
@@ -73,6 +84,11 @@
     try { showStatus(await window.studio.clearKiraAiBetaKey()); } catch (error) { showStatus(null, error.message || String(error), true); }
   }
 
+  function inputDimensions() {
+    const image = $id('beforeImage') || document.querySelector('.comparison-before img') || document.querySelector('img[data-role="input-preview"]');
+    return { width: image?.naturalWidth || 0, height: image?.naturalHeight || 0 };
+  }
+
   async function run(event) {
     if ($id('jobProviderSelect')?.value !== 'kiraai' || typeof state === 'undefined' || state.tool !== 'ai-enhance') return;
     event.preventDefault(); event.stopImmediatePropagation();
@@ -81,23 +97,31 @@
       await openSettings();
       $id('resultBox').classList.add('error'); $id('resultBox').textContent = 'Chưa có API key KiraAI.vn. Nhập key trong Cài đặt.'; $id('resultBox').hidden = false; return;
     }
+    const prompt = $id('customPrompt')?.value.trim() || '';
+    if (!prompt) {
+      $id('resultBox').classList.add('error');
+      $id('resultBox').textContent = 'KiraAI Images API yêu cầu prompt. Hãy nhập mô tả ảnh cần tạo.';
+      $id('resultBox').hidden = false;
+      return;
+    }
     if (!state.outputPath) {
       state.outputPath = await window.studio.selectKiraAiBetaOutput({ inputPath: state.inputPath });
       if ($id('outputPath')) $id('outputPath').textContent = state.outputPath || 'Chưa chọn';
     }
     if (!state.outputPath) return;
-    providerState.running = true; $id('runBtn').disabled = true; $id('progressWrap').hidden = false; $id('progressBar').style.width = '10%'; $id('progressText').textContent = 'Đang gửi ảnh tới KiraAI.vn...';
+    const dimensions = inputDimensions();
+    providerState.running = true; $id('runBtn').disabled = true; $id('progressWrap').hidden = false; $id('progressBar').style.width = '10%'; $id('progressText').textContent = 'Đang gửi yêu cầu tới KiraAI.vn...';
     try {
-      const result = await window.studio.runKiraAiBetaEnhance({ inputPath: state.inputPath, outputPath: state.outputPath, options: { modelId: $id('aiModelSelect').value, scale: Number($id('aiImageSize').value) || 2, prompt: $id('customPrompt').value } });
+      const result = await window.studio.runKiraAiBetaEnhance({ inputPath: state.inputPath, outputPath: state.outputPath, options: { modelId: $id('aiModelSelect').value, prompt, inputWidth: dimensions.width, inputHeight: dimensions.height } });
       $id('progressBar').style.width = '100%'; $id('progressText').textContent = 'KiraAI.vn đã hoàn tất.';
-      $id('resultBox').classList.remove('error'); $id('resultBox').textContent = `Đã lưu kết quả ${result.modelLabel}: ${result.outputPath}`; $id('resultBox').hidden = false;
+      $id('resultBox').classList.remove('error'); $id('resultBox').textContent = `Đã lưu ảnh ${result.modelLabel} · tỷ lệ ${result.aspectRatio}: ${result.outputPath}`; $id('resultBox').hidden = false;
       await showComparison(result.outputPath);
     } catch (error) {
       $id('resultBox').classList.add('error'); $id('resultBox').textContent = error.message || String(error); $id('resultBox').hidden = false;
     } finally { providerState.running = false; $id('runBtn').disabled = !state.inputPath; }
   }
 
-  installSettings(); installProvider();
+  installSettings(); installProvider(); ensureNotice();
   $id('saveKiraAiKeyBtn')?.addEventListener('click', saveKey);
   $id('testKiraAiKeyBtn')?.addEventListener('click', testKey);
   $id('clearKiraAiKeyBtn')?.addEventListener('click', clearKey);
