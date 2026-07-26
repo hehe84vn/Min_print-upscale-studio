@@ -46,6 +46,12 @@ contextBridge.exposeInMainWorld('studio', {
   testKreaBetaConnection: () => ipcRenderer.invoke('krea-beta:test'),
   selectKreaBetaOutput: (payload) => ipcRenderer.invoke('krea-beta:select-output', payload),
   runKreaBetaEnhance: (payload) => ipcRenderer.invoke('krea-beta:enhance', payload),
+  getKiraAiBetaStatus: () => ipcRenderer.invoke('kiraai-beta:status'),
+  saveKiraAiBetaKey: (apiKey) => ipcRenderer.invoke('kiraai-beta:save-key', apiKey),
+  clearKiraAiBetaKey: () => ipcRenderer.invoke('kiraai-beta:clear-key'),
+  testKiraAiBetaConnection: () => ipcRenderer.invoke('kiraai-beta:test'),
+  selectKiraAiBetaOutput: (payload) => ipcRenderer.invoke('kiraai-beta:select-output', payload),
+  runKiraAiBetaEnhance: (payload) => ipcRenderer.invoke('kiraai-beta:enhance', payload),
   getLicenseStatus: (force = false) => ipcRenderer.invoke('license:status', { force: force === true }),
   loginLicense: (payload) => ipcRenderer.invoke('license:login', payload),
   validateLicense: () => ipcRenderer.invoke('license:validate'),
@@ -60,6 +66,11 @@ contextBridge.exposeInMainWorld('studio', {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('krea-beta:progress', listener);
     return () => ipcRenderer.removeListener('krea-beta:progress', listener);
+  },
+  onKiraAiBetaProgress: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('kiraai-beta:progress', listener);
+    return () => ipcRenderer.removeListener('kiraai-beta:progress', listener);
   },
   onUpdateCheckProgress: (callback) => {
     const listener = (_event, value) => callback(value);
