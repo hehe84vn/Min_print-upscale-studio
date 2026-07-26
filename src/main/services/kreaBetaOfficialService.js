@@ -49,7 +49,25 @@ async function uploadAsset(apiKey, inputPath) {
 function buildPayload(modelId, asset, options = {}) {
   const config = configFor(modelId); const requested = clamp(options.scale, 1, 4, 2); const scale = Math.min(requested, config.maxDimension / Math.max(asset.width, asset.height));
   if (scale < 1) throw new Error(`Ảnh nguồn vượt giới hạn ${config.maxDimension}px của ${config.label}.`);
-  const prompt = String(options.prompt || '').trim().slice(0, 2000);
+  const prompt = String(options.prompt || '').trim().slice(0, 1024);
+
+  if (modelId === 'topaz') {
+    return {
+      image_url: asset.image_url,
+      model: 'Standard V2',
+      upscale_factor: scale,
+      crop_to_fill: false,
+      output_format: 'png',
+      subject_detection: 'All',
+      face_enhancement: Boolean(options.protectFace),
+      face_enhancement_creativity: 0,
+      face_enhancement_strength: Boolean(options.protectFace) ? 0.8 : 0,
+      sharpen: 0.35,
+      denoise: 0.35,
+      fix_compression: 0.35
+    };
+  }
+
   if (modelId === 'krea-enhance') return {
     image_url: asset.image_url,
     prompt,
@@ -60,23 +78,16 @@ function buildPayload(modelId, asset, options = {}) {
     resemblance_strength: 1.5,
     sharpness: 0.4
   };
+
   const payload = {
     width: Math.round(asset.width * scale),
     height: Math.round(asset.height * scale),
     image_url: asset.image_url,
     prompt,
     output_format: 'png',
-    upscaling_activated: scale > 1,
     image_scaling_factor: scale,
     crop_to_fill: false
   };
-  if (modelId === 'topaz') Object.assign(payload, {
-    face_enhancement: Boolean(options.protectFace),
-    sharpen: 0.35,
-    denoise: 0.35,
-    fix_compression: 0.35,
-    strength: 0.35
-  });
   if (modelId === 'topaz-generative') Object.assign(payload, {
     face_enhancement: Boolean(options.protectFace),
     subject_detection: 'All',
