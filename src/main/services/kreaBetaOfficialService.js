@@ -47,13 +47,15 @@ async function uploadAsset(apiKey, inputPath) {
   const asset = await response.json(); if (!asset?.image_url || !asset?.width || !asset?.height) throw new Error(`Krea upload không trả về đủ dữ liệu asset: ${safeJson(asset)}`); return asset;
 }
 function buildPayload(modelId, asset, options = {}) {
-  const config = configFor(modelId); const requested = clamp(options.scale, 1, 4, 2); const scale = Math.min(requested, config.maxDimension / Math.max(asset.width, asset.height));
+  const config = configFor(modelId);
+  const requested = clamp(options.scale, 1, 4, 2);
+  const scale = Math.min(requested, config.maxDimension / Math.max(asset.width, asset.height));
   if (scale < 1) throw new Error(`Ảnh nguồn vượt giới hạn ${config.maxDimension}px của ${config.label}.`);
+  const width = Math.round(asset.width * scale);
+  const height = Math.round(asset.height * scale);
   const prompt = String(options.prompt || '').trim().slice(0, 1024);
 
-  // Krea's official SDK example for Topaz Standard sends only image_url.
-  // Krea validates its own request schema; Fal/Topaz-native controls must not be forwarded here.
-  if (modelId === 'topaz') return { image_url: asset.image_url };
+  if (modelId === 'topaz') return { image_url: asset.image_url, width, height };
 
   if (modelId === 'krea-enhance') return {
     image_url: asset.image_url,
@@ -66,28 +68,14 @@ function buildPayload(modelId, asset, options = {}) {
     sharpness: 0.4
   };
 
-  const payload = {
-    width: Math.round(asset.width * scale),
-    height: Math.round(asset.height * scale),
-    image_url: asset.image_url,
-    prompt,
-    output_format: 'png',
-    image_scaling_factor: scale,
-    crop_to_fill: false
-  };
+  const payload = { width, height, image_url: asset.image_url, prompt, output_format: 'png', image_scaling_factor: scale, crop_to_fill: false };
   if (modelId === 'topaz-generative') Object.assign(payload, {
-    face_enhancement: Boolean(options.protectFace),
-    subject_detection: 'All',
-    creativity: Math.round(clamp(options.creativity, 1, 6, 3)),
-    texture: Math.round(clamp(options.texture, 1, 5, 3)),
-    sharpen: 0.5,
-    denoise: 0.5,
-    detail: 0.5
+    face_enhancement: Boolean(options.protectFace), subject_detection: 'All',
+    creativity: Math.round(clamp(options.creativity, 1, 6, 3)), texture: Math.round(clamp(options.texture, 1, 5, 3)),
+    sharpen: 0.5, denoise: 0.5, detail: 0.5
   });
   if (modelId === 'topaz-bloom') Object.assign(payload, {
-    creativity: Math.round(clamp(options.creativity, 1, 9, 3)),
-    face_preservation: Boolean(options.protectFace),
-    color_preservation: options.preserveColor !== false
+    creativity: Math.round(clamp(options.creativity, 1, 9, 3)), face_preservation: Boolean(options.protectFace), color_preservation: options.preserveColor !== false
   });
   return Object.fromEntries(Object.entries(payload).filter(([, value]) => compact(value) !== undefined));
 }
