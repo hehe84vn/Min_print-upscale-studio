@@ -55,7 +55,12 @@ function buildPayload(modelId, asset, options = {}) {
   const height = Math.round(asset.height * scale);
   const prompt = String(options.prompt || '').trim().slice(0, 1024);
 
-  if (modelId === 'topaz') return { image_url: asset.image_url, width, height };
+  if (modelId === 'topaz') return {
+    width,
+    height,
+    image_url: asset.image_url,
+    model: 'Standard V2'
+  };
 
   if (modelId === 'krea-enhance') return {
     image_url: asset.image_url,
@@ -75,6 +80,7 @@ function buildPayload(modelId, asset, options = {}) {
     sharpen: 0.5, denoise: 0.5, detail: 0.5
   });
   if (modelId === 'topaz-bloom') Object.assign(payload, {
+    model: 'Reimagine',
     creativity: Math.round(clamp(options.creativity, 1, 9, 3)), face_preservation: Boolean(options.protectFace), color_preservation: options.preserveColor !== false
   });
   return Object.fromEntries(Object.entries(payload).filter(([, value]) => compact(value) !== undefined));
