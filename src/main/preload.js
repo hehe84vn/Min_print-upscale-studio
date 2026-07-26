@@ -40,6 +40,12 @@ contextBridge.exposeInMainWorld('studio', {
   saveAiSettings: (payload) => ipcRenderer.invoke('ai:settings:save', payload),
   clearAiKey: (provider) => ipcRenderer.invoke('ai:settings:clear-key', provider),
   testAiConnection: (provider) => ipcRenderer.invoke('ai:settings:test', provider),
+  getKreaBetaStatus: () => ipcRenderer.invoke('krea-beta:status'),
+  saveKreaBetaKey: (apiKey) => ipcRenderer.invoke('krea-beta:save-key', apiKey),
+  clearKreaBetaKey: () => ipcRenderer.invoke('krea-beta:clear-key'),
+  testKreaBetaConnection: () => ipcRenderer.invoke('krea-beta:test'),
+  selectKreaBetaOutput: (payload) => ipcRenderer.invoke('krea-beta:select-output', payload),
+  runKreaBetaEnhance: (payload) => ipcRenderer.invoke('krea-beta:enhance', payload),
   getLicenseStatus: (force = false) => ipcRenderer.invoke('license:status', { force: force === true }),
   loginLicense: (payload) => ipcRenderer.invoke('license:login', payload),
   validateLicense: () => ipcRenderer.invoke('license:validate'),
@@ -49,6 +55,11 @@ contextBridge.exposeInMainWorld('studio', {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('job:progress', listener);
     return () => ipcRenderer.removeListener('job:progress', listener);
+  },
+  onKreaBetaProgress: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('krea-beta:progress', listener);
+    return () => ipcRenderer.removeListener('krea-beta:progress', listener);
   },
   onUpdateCheckProgress: (callback) => {
     const listener = (_event, value) => callback(value);
