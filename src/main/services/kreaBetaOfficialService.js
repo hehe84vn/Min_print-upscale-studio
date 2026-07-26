@@ -51,15 +51,16 @@ function buildPayload(modelId, asset, options = {}) {
   const requested = clamp(options.scale, 1, 4, 2);
   const scale = Math.min(requested, config.maxDimension / Math.max(asset.width, asset.height));
   if (scale < 1) throw new Error(`Ảnh nguồn vượt giới hạn ${config.maxDimension}px của ${config.label}.`);
-  const width = Math.round(asset.width * scale);
-  const height = Math.round(asset.height * scale);
   const prompt = String(options.prompt || '').trim().slice(0, 1024);
 
   if (modelId === 'topaz') return {
-    width,
-    height,
+    width: Math.round(asset.width),
+    height: Math.round(asset.height),
     image_url: asset.image_url,
-    model: 'Standard V2'
+    model: 'Standard V2',
+    output_format: 'png',
+    upscaling_activated: scale > 1,
+    image_scaling_factor: scale
   };
 
   if (modelId === 'krea-enhance') return {
@@ -73,7 +74,7 @@ function buildPayload(modelId, asset, options = {}) {
     sharpness: 0.4
   };
 
-  const payload = { width, height, image_url: asset.image_url, prompt, output_format: 'png', image_scaling_factor: scale, crop_to_fill: false };
+  const payload = { width: Math.round(asset.width), height: Math.round(asset.height), image_url: asset.image_url, prompt, output_format: 'png', image_scaling_factor: scale, upscaling_activated: scale > 1, crop_to_fill: false };
   if (modelId === 'topaz-generative') Object.assign(payload, {
     face_enhancement: Boolean(options.protectFace), subject_detection: 'All',
     creativity: Math.round(clamp(options.creativity, 1, 6, 3)), texture: Math.round(clamp(options.texture, 1, 5, 3)),
