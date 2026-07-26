@@ -51,22 +51,9 @@ function buildPayload(modelId, asset, options = {}) {
   if (scale < 1) throw new Error(`Ảnh nguồn vượt giới hạn ${config.maxDimension}px của ${config.label}.`);
   const prompt = String(options.prompt || '').trim().slice(0, 1024);
 
-  if (modelId === 'topaz') {
-    return {
-      image_url: asset.image_url,
-      model: 'Standard V2',
-      upscale_factor: scale,
-      crop_to_fill: false,
-      output_format: 'png',
-      subject_detection: 'All',
-      face_enhancement: Boolean(options.protectFace),
-      face_enhancement_creativity: 0,
-      face_enhancement_strength: Boolean(options.protectFace) ? 0.8 : 0,
-      sharpen: 0.35,
-      denoise: 0.35,
-      fix_compression: 0.35
-    };
-  }
+  // Krea's official SDK example for Topaz Standard sends only image_url.
+  // Krea validates its own request schema; Fal/Topaz-native controls must not be forwarded here.
+  if (modelId === 'topaz') return { image_url: asset.image_url };
 
   if (modelId === 'krea-enhance') return {
     image_url: asset.image_url,
