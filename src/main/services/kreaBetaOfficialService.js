@@ -16,6 +16,8 @@ const MODEL_CONFIGS = Object.freeze({
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function clamp(value, min, max, fallback) { const n = Number(value); return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback; }
 function configFor(id) { const config = MODEL_CONFIGS[id]; if (!config) throw new Error('Model Krea không được hỗ trợ.'); return config; }
+function compact(value) { return value === undefined || value === null || value === '' ? undefined : value; }
+function safeJson(value) { try { return JSON.stringify(value); } catch { return String(value); } }
 async function readError(response) { const text = await response.text(); try { const data = JSON.parse(text); return data?.error?.message || data?.error || data?.message || text; } catch { return text || `HTTP ${response.status}`; } }
 async function fetchWithTimeout(url, init = {}, timeoutMs = 30000) {
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -42,36 +44,90 @@ async function uploadAsset(apiKey, inputPath) {
   const form = new FormData(); form.append('file', new Blob([bytes]), path.basename(inputPath)); form.append('description', 'Print Upscale Studio Krea Beta input');
   const response = await fetchWithTimeout(`${API_BASE}/assets`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form }, 120000);
   if (!response.ok) throw new Error(`Krea upload: ${await readError(response)}`);
-  const asset = await response.json(); if (!asset?.image_url || !asset?.width || !asset?.height) throw new Error('Krea upload không trả về đủ dữ liệu asset.'); return asset;
+  const asset = await response.json(); if (!asset?.image_url || !asset?.width || !asset?.height) throw new Error(`Krea upload không trả về đủ dữ liệu asset: ${safeJson(asset)}`); return asset;
 }
 function buildPayload(modelId, asset, options = {}) {
   const config = configFor(modelId); const requested = clamp(options.scale, 1, 4, 2); const scale = Math.min(requested, config.maxDimension / Math.max(asset.width, asset.height));
   if (scale < 1) throw new Error(`Ảnh nguồn vượt giới hạn ${config.maxDimension}px của ${config.label}.`);
-  const common = { width: Math.round(asset.width * scale), height: Math.round(asset.height * scale), image_url: asset.image_url, prompt: String(options.prompt || '').trim().slice(0, 2000), output_format: 'png' };
-  if (modelId === 'krea-enhance') return { image_url: asset.image_url, prompt: common.prompt, image_scaling_factor: scale, rescale_color: options.preserveColor !== false, ai_strength: clamp(options.creativity, 0.1, 1, 0.3), clarity_strength: 5, resemblance_strength: 1.5, sharpness: 0.4 };
-  const payload = { ...common, upscaling_activated: scale > 1, image_scaling_factor: scale, crop_to_fill: false };
-  if (modelId === 'topaz') Object.assign(payload, { model: options.protectText ? 'Text Refine' : 'High Fidelity V2', face_enhancement: Boolean(options.protectFace), sharpen: 0.35, denoise: 0.35, fix_compression: 0.35, strength: 0.35 });
-  if (modelId === 'topaz-generative') Object.assign(payload, { model: 'Recovery V2', face_enhancement: Boolean(options.protectFace), creativity: Math.round(clamp(options.creativity, 1, 6, 2)), texture: Math.round(clamp(options.texture, 1, 5, 2)), sharpen: 0.45, denoise: 0.4, detail: 0.45 });
-  if (modelId === 'topaz-bloom') Object.assign(payload, { creativity: Math.round(clamp(options.creativity, 1, 9, 3)), face_preservation: Boolean(options.protectFace), color_preservation: options.preserveColor !== false });
-  return payload;
+  const prompt = String(options.prompt || '').trim().slice(0, 2000);
+  if (modelId === 'krea-enhance') return {
+    image_url: asset.image_url,
+    prompt,
+    image_scaling_factor: scale,
+    rescale_color: options.preserveColor !== false,
+    ai_strength: clamp(options.creativity, 0.1, 1, 0.3),
+    clarity_strength: 5,
+    resemblance_strength: 1.5,
+    sharpness: 0.4
+  };
+  const payload = {
+    width: Math.round(asset.width * scale),
+    height: Math.round(asset.height * scale),
+    image_url: asset.image_url,
+    prompt,
+    output_format: 'png',
+    upscaling_activated: scale > 1,
+    image_scaling_factor: scale,
+    crop_to_fill: false
+  };
+  if (modelId === 'topaz') Object.assign(payload, {
+    face_enhancement: Boolean(options.protectFace),
+    sharpen: 0.35,
+    denoise: 0.35,
+    fix_compression: 0.35,
+    strength: 0.35
+  });
+  if (modelId === 'topaz-generative') Object.assign(payload, {
+    face_enhancement: Boolean(options.protectFace),
+    subject_detection: 'All',
+    creativity: Math.round(clamp(options.creativity, 1, 6, 3)),
+    texture: Math.round(clamp(options.texture, 1, 5, 3)),
+    sharpen: 0.5,
+    denoise: 0.5,
+    detail: 0.5
+  });
+  if (modelId === 'topaz-bloom') Object.assign(payload, {
+    creativity: Math.round(clamp(options.creativity, 1, 9, 3)),
+    face_preservation: Boolean(options.protectFace),
+    color_preservation: options.preserveColor !== false
+  });
+  return Object.fromEntries(Object.entries(payload).filter(([, value]) => compact(value) !== undefined));
 }
 async function submit(apiKey, modelId, asset, options) {
-  const response = await fetchWithTimeout(`${API_BASE}${configFor(modelId).endpoint}`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(buildPayload(modelId, asset, options)) }, 60000);
-  if (!response.ok) throw new Error(`Krea API: ${await readError(response)}`); const data = await response.json(); if (!data?.job_id) throw new Error('Krea không trả về job_id.'); return data;
+  const payload = buildPayload(modelId, asset, options);
+  const response = await fetchWithTimeout(`${API_BASE}${configFor(modelId).endpoint}`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, 60000);
+  if (!response.ok) throw new Error(`Krea API: ${await readError(response)} | endpoint=${configFor(modelId).endpoint} | payload=${safeJson(payload)}`);
+  const data = await response.json(); if (!data?.job_id) throw new Error(`Krea không trả về job_id: ${safeJson(data)}`); return { ...data, submittedPayload: payload };
+}
+function jobFailureMessage(job, jobId) {
+  const detail = job?.error?.message || job?.error || job?.failure_reason || job?.failureReason || job?.message || job?.status_message || job?.result?.error;
+  return `Krea job ${jobId} kết thúc với trạng thái ${job?.status || 'failed'}${detail ? `: ${typeof detail === 'string' ? detail : safeJson(detail)}` : ''}. Chi tiết: ${safeJson(job)}`;
 }
 async function waitForJob(apiKey, jobId, onProgress) {
   const start = Date.now(); while (Date.now() - start < 600000) {
     const response = await fetchWithTimeout(`${API_BASE}/jobs/${encodeURIComponent(jobId)}`, { headers: { Authorization: `Bearer ${apiKey}` } });
-    if (!response.ok) throw new Error(`Krea API: ${await readError(response)}`); const job = await response.json(); onProgress?.({ status: job.status || 'processing', jobId });
-    if (TERMINAL_STATUSES.has(job.status)) { if (job.status !== 'completed') throw new Error(`Krea job kết thúc với trạng thái ${job.status}.`); const url = job?.result?.urls?.[0]; if (!url) throw new Error('Krea không trả về URL kết quả.'); return url; }
+    if (!response.ok) throw new Error(`Krea API: ${await readError(response)}`);
+    const job = await response.json(); onProgress?.({ status: job.status || 'processing', jobId, job });
+    if (TERMINAL_STATUSES.has(job.status)) {
+      if (job.status !== 'completed') throw new Error(jobFailureMessage(job, jobId));
+      const url = job?.result?.urls?.[0] || job?.result?.url || job?.output_url;
+      if (!url) throw new Error(`Krea không trả về URL kết quả. Chi tiết: ${safeJson(job)}`);
+      return { url, job };
+    }
     await sleep(2500);
-  } throw new Error('Krea job đã quá thời gian chờ 10 phút.');
+  } throw new Error(`Krea job ${jobId} đã quá thời gian chờ 10 phút.`);
 }
 async function enhance({ secureSecretsService, inputPath, outputPath, options = {}, onProgress }) {
-  if (!inputPath || !outputPath) throw new Error('Thiếu đường dẫn đầu vào hoặc đầu ra.'); const apiKey = await requireApiKey(secureSecretsService); const modelId = String(options.modelId || 'topaz'); configFor(modelId);
-  onProgress?.({ status: 'uploading', message: 'Đang tải ảnh lên Krea...' }); const asset = await uploadAsset(apiKey, inputPath); const job = await submit(apiKey, modelId, asset, options); onProgress?.({ status: job.status || 'queued', jobId: job.job_id });
-  const resultUrl = await waitForJob(apiKey, job.job_id, onProgress); const response = await fetchWithTimeout(resultUrl, {}, 120000); if (!response.ok) throw new Error(`Không tải được kết quả Krea: HTTP ${response.status}`);
-  await fs.mkdir(path.dirname(outputPath), { recursive: true }); await fs.writeFile(outputPath, Buffer.from(await response.arrayBuffer())); return { outputPath, outputUrl: resultUrl, jobId: job.job_id, modelId, modelLabel: configFor(modelId).label, beta: true };
+  if (!inputPath || !outputPath) throw new Error('Thiếu đường dẫn đầu vào hoặc đầu ra.');
+  const apiKey = await requireApiKey(secureSecretsService); const modelId = String(options.modelId || 'topaz'); configFor(modelId);
+  onProgress?.({ status: 'uploading', message: 'Đang tải ảnh lên Krea...' });
+  const asset = await uploadAsset(apiKey, inputPath);
+  const submitted = await submit(apiKey, modelId, asset, options);
+  onProgress?.({ status: submitted.status || 'queued', jobId: submitted.job_id, submittedPayload: submitted.submittedPayload });
+  const completed = await waitForJob(apiKey, submitted.job_id, onProgress);
+  const response = await fetchWithTimeout(completed.url, {}, 120000); if (!response.ok) throw new Error(`Không tải được kết quả Krea: HTTP ${response.status}`);
+  await fs.mkdir(path.dirname(outputPath), { recursive: true }); await fs.writeFile(outputPath, Buffer.from(await response.arrayBuffer()));
+  return { outputPath, outputUrl: completed.url, jobId: submitted.job_id, modelId, modelLabel: configFor(modelId).label, beta: true };
 }
 
 module.exports = { API_BASE, SECRET_NAME, MODEL_CONFIGS, buildPayload, clearApiKey, enhance, getStatus, saveApiKey, testConnection };
