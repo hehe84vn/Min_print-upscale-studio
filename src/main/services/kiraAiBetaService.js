@@ -100,21 +100,86 @@ async function writeOutput(source, outputPath) {
   await fs.writeFile(outputPath, Buffer.from(await response.arrayBuffer()));
 }
 
-const REBUILD_SYSTEM_PROMPT = `Analyze the supplied image for faithful visual reconstruction. Return one production-ready English image-generation prompt only. Preserve composition, object placement, perspective, dominant colors, lighting direction, visual hierarchy and subject identity. Improve material detail, natural texture, edge definition and perceived resolution. Do not add unrelated objects. For posters or packaging, preserve empty zones and layout geometry, but do not attempt to reproduce readable text or logos; describe those areas as clean placeholders because typography and logos will be restored separately.`;
+const ANALYSIS_SYSTEM_PROMPT = `You are a prepress image analyst. Inspect the supplied image and return strict JSON only, without markdown. Use this schema exactly: {"image_type":"photo|poster|packaging|illustration|mixed","composition":"","main_subjects":[],"object_positions":[],"background":"","lighting":"","materials":[],"color_palette":[],"style":"","camera_or_perspective":"","text_regions":[],"logo_regions":[],"details_to_improve":[],"elements_to_preserve":[],"risk_flags":[]}. Be concrete, visual and production-oriented. Do not invent content that is not visible.`;
 
-async function buildReconstructionPrompt(apiKey, inputPath, userPrompt, mode = 'safe') {
+function parseAnalysisJson(content) {
+  const raw = String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      image_type: parsed.image_type || 'mixed',
+      composition: parsed.composition || '',
+      main_subjects: Array.isArray(parsed.main_subjects) ? parsed.main_subjects : [],
+      object_positions: Array.isArray(parsed.object_positions) ? parsed.object_positions : [],
+      background: parsed.background || '',
+      lighting: parsed.lighting || '',
+      materials: Array.isArray(parsed.materials) ? parsed.materials : [],
+      color_palette: Array.isArray(parsed.color_palette) ? parsed.color_palette : [],
+      style: parsed.style || '',
+      camera_or_perspective: parsed.camera_or_perspective || '',
+      text_regions: Array.isArray(parsed.text_regions) ? parsed.text_regions : [],
+      logo_regions: Array.isArray(parsed.logo_regions) ? parsed.logo_regions : [],
+      details_to_improve: Array.isArray(parsed.details_to_improve) ? parsed.details_to_improve : [],
+      elements_to_preserve: Array.isArray(parsed.elements_to_preserve) ? parsed.elements_to_preserve : [],
+      risk_flags: Array.isArray(parsed.risk_flags) ? parsed.risk_flags : []
+    };
+  } catch {
+    throw new Error(`Kira Vision trả về JSON không hợp lệ: ${raw.slice(0, 800)}`);
+  }
+}
+
+async function analyzeReferenceImage(apiKey, inputPath) {
   const bytes = await fs.readFile(inputPath);
   const dataUri = `data:${mimeFromPath(inputPath)};base64,${bytes.toString('base64')}`;
-  const modeInstruction = mode === 'creative' ? 'Allow moderate creative reinterpretation while keeping the main composition.' : mode === 'balanced' ? 'Improve details naturally while staying close to the source.' : 'Stay extremely close to the source and minimize invented details.';
   const response = await fetchWithTimeout(`${API_BASE}${CHAT_ENDPOINT}`, {
-    method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'kira-3.5-flash', stream: false, temperature: 0.2, max_tokens: 1800, messages: [{ role: 'system', content: REBUILD_SYSTEM_PROMPT }, { role: 'user', content: [{ type: 'text', text: `${modeInstruction}\nAdditional user request: ${String(userPrompt || '').trim() || 'None'}` }, { type: 'image_url', image_url: { url: dataUri } }] }] })
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'kira-3.5-flash',
+      stream: false,
+      temperature: 0.1,
+      max_tokens: 2200,
+      messages: [
+        { role: 'system', content: ANALYSIS_SYSTEM_PROMPT },
+        { role: 'user', content: [{ type: 'text', text: 'Analyze this reference image for high-quality reconstruction.' }, { type: 'image_url', image_url: { url: dataUri } }] }
+      ]
+    })
   }, 120000);
   if (!response.ok) throw new Error(`KiraAI Vision: ${await readError(response)}`);
   const data = await response.json();
-  const prompt = String(data?.choices?.[0]?.message?.content || '').trim();
-  if (!prompt) throw new Error(`KiraAI Vision không trả về prompt tái dựng: ${JSON.stringify(data)}`);
-  return prompt;
+  return parseAnalysisJson(data?.choices?.[0]?.message?.content);
+}
+
+function buildReconstructionPrompt(analysis, userPrompt = '', mode = 'safe') {
+  const modeInstruction = mode === 'creative'
+    ? 'Allow moderate creative reinterpretation while preserving the main visual identity and composition.'
+    : mode === 'balanced'
+      ? 'Improve detail and realism naturally while staying close to the source.'
+      : 'Stay extremely close to the source. Minimize invented details and preserve geometry rigorously.';
+  const list = (value) => Array.isArray(value) && value.length ? value.join('; ') : 'none specified';
+  const isArtwork = ['poster', 'packaging', 'mixed'].includes(String(analysis.image_type || '').toLowerCase());
+  return [
+    'Reconstruct the reference visual as a high-quality, production-ready image.',
+    modeInstruction,
+    `Image type: ${analysis.image_type}.`,
+    `Composition: ${analysis.composition}.`,
+    `Main subjects: ${list(analysis.main_subjects)}.`,
+    `Object placement: ${list(analysis.object_positions)}.`,
+    `Background: ${analysis.background}.`,
+    `Lighting: ${analysis.lighting}.`,
+    `Materials and surfaces: ${list(analysis.materials)}.`,
+    `Dominant color palette: ${list(analysis.color_palette)}.`,
+    `Visual style: ${analysis.style}.`,
+    `Camera or perspective: ${analysis.camera_or_perspective}.`,
+    `Preserve exactly: ${list(analysis.elements_to_preserve)}.`,
+    `Improve carefully: ${list(analysis.details_to_improve)}.`,
+    'Preserve the original composition, object proportions, perspective, visual hierarchy, dominant colors, lighting direction and subject identity.',
+    'Improve natural texture, material definition, tonal separation, edge clarity and perceived resolution without oversharpening, plastic surfaces or synthetic noise.',
+    'Do not add unrelated objects, redesign the layout, change the crop, alter the palette, or invent decorative content.',
+    isArtwork ? `The source contains text or logo regions: ${list([...analysis.text_regions, ...analysis.logo_regions])}. Preserve their geometry as clean placeholders only; do not invent readable lettering or redraw brand marks because those elements will be restored separately.` : '',
+    analysis.risk_flags?.length ? `Avoid these risks: ${list(analysis.risk_flags)}.` : '',
+    String(userPrompt || '').trim() ? `Additional user instruction: ${String(userPrompt).trim()}` : ''
+  ].filter(Boolean).join('\n');
 }
 
 async function enhance({ secureSecretsService, inputPath, outputPath, options = {}, onProgress }) {
@@ -124,16 +189,18 @@ async function enhance({ secureSecretsService, inputPath, outputPath, options = 
   const selected = models.find((item) => item.id === options.modelId) || models[0] || { id: 'kira-3.0-image', label: 'Kira 3.0 Image' };
   const aspectRatio = normalizeAspectRatio(options.aspectRatio || aspectRatioFromDimensions(options.inputWidth, options.inputHeight));
 
-  onProgress?.({ status: 'analyzing', message: 'Kira Vision đang phân tích ảnh và tạo prompt tái dựng...' });
-  const generatedPrompt = await buildReconstructionPrompt(apiKey, inputPath, options.prompt, options.rebuildMode || 'safe');
+  onProgress?.({ status: 'analyzing', message: 'Kira Vision đang phân tích cấu trúc ảnh...' });
+  const analysis = await analyzeReferenceImage(apiKey, inputPath);
+  onProgress?.({ status: 'prompting', message: 'App đang tạo prompt tái dựng tối ưu...', analysis });
+  const generatedPrompt = buildReconstructionPrompt(analysis, options.prompt, options.rebuildMode || 'safe');
   const payload = { model: selected.id, prompt: generatedPrompt, aspect_ratio: aspectRatio };
 
-  onProgress?.({ status: 'uploading', message: `Đang gửi prompt tái dựng tới ${selected.label}...`, generatedPrompt });
+  onProgress?.({ status: 'uploading', message: `Đang gửi prompt tái dựng tới ${selected.label}...`, generatedPrompt, analysis });
   const response = await fetchWithTimeout(`${API_BASE}${IMAGE_ENDPOINT}`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, 180000);
   if (!response.ok) throw new Error(`KiraAI Image: ${await readError(response)} | payload=${JSON.stringify(payload)}`);
   onProgress?.({ status: 'processing', message: 'KiraAI.vn đang tái dựng ảnh...' });
   const data = await response.json(); const output = extractOutput(data); await writeOutput(output.source, outputPath);
-  return { outputPath, modelId: selected.id, modelLabel: selected.label, aspectRatio, endpoint: IMAGE_ENDPOINT, generatedPrompt, beta: true, referenceImageUsed: false, sourceAnalyzedByVision: true };
+  return { outputPath, modelId: selected.id, modelLabel: selected.label, aspectRatio, endpoint: IMAGE_ENDPOINT, analysis, generatedPrompt, beta: true, referenceImageUsed: false, sourceAnalyzedByVision: true, promptBuiltInternally: true };
 }
 
-module.exports = { API_BASE, ALLOWED_ASPECT_RATIOS, CHAT_ENDPOINT, IMAGE_ENDPOINT, MODELS_ENDPOINT, SECRET_NAME, aspectRatioFromDimensions, buildReconstructionPrompt, clearApiKey, enhance, extractOutput, getStatus, listImageModels, normalizeAspectRatio, saveApiKey, testConnection };
+module.exports = { API_BASE, ALLOWED_ASPECT_RATIOS, CHAT_ENDPOINT, IMAGE_ENDPOINT, MODELS_ENDPOINT, SECRET_NAME, analyzeReferenceImage, aspectRatioFromDimensions, buildReconstructionPrompt, clearApiKey, enhance, extractOutput, getStatus, listImageModels, normalizeAspectRatio, parseAnalysisJson, saveApiKey, testConnection };
