@@ -8,6 +8,7 @@ const IMAGE_ENDPOINT = '/images/generations';
 const CHAT_ENDPOINT = '/chat/completions';
 const MODELS_ENDPOINT = '/models';
 const SECRET_NAME = 'kiraAiApiKey';
+const DIRECTOR_MODEL = 'gpt-5.4';
 const FALLBACK_MODELS = Object.freeze({
   'kira-3.0-image': { label: 'Kira 3.0 Image' },
   'kira-2.0-image': { label: 'Kira 2.0 Image' }
@@ -49,24 +50,41 @@ function normalizeModelRecord(item) {
   };
 }
 
-async function listImageModels(apiKey = '') {
+async function listAllModels(apiKey = '') {
   const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
   const response = await fetchWithTimeout(`${API_BASE}${MODELS_ENDPOINT}`, { headers }, 30000);
   if (!response.ok) throw new Error(`KiraAI models: ${await readError(response)}`);
   const data = await response.json();
-  const models = (Array.isArray(data?.data) ? data.data : []).map(normalizeModelRecord).filter(Boolean);
+  return Array.isArray(data?.data) ? data.data : [];
+}
+
+async function listImageModels(apiKey = '') {
+  const records = await listAllModels(apiKey);
+  const models = records.map(normalizeModelRecord).filter(Boolean);
   return models.length ? models : Object.entries(FALLBACK_MODELS).map(([id, value]) => ({ id, label: value.label }));
+}
+
+async function assertDirectorModelAvailable(apiKey, directorModelId = DIRECTOR_MODEL) {
+  const records = await listAllModels(apiKey);
+  const model = records.find((item) => item?.id === directorModelId);
+  if (!model) throw new Error(`KiraAI chưa trả về model ${directorModelId} trong /models. Không tự đổi sang model khác để tránh sai bài test.`);
+  if (model.status && model.status !== 'active') throw new Error(`Model ${directorModelId} hiện không active trên KiraAI.`);
+  return { id: model.id, label: model.name || model.id };
 }
 
 async function getStatus(secrets) {
   try {
     const status = await secrets.status(SECRET_NAME);
     let models;
-    try { models = await listImageModels(status.configured ? await secrets.get(SECRET_NAME) : ''); }
-    catch { models = Object.entries(FALLBACK_MODELS).map(([id, value]) => ({ id, label: value.label })); }
-    return { beta: true, configured: status.configured, suffix: status.suffix, apiBase: API_BASE, endpoint: IMAGE_ENDPOINT, models };
+    let directorAvailable = false;
+    try {
+      const apiKey = status.configured ? await secrets.get(SECRET_NAME) : '';
+      models = await listImageModels(apiKey);
+      if (apiKey) directorAvailable = Boolean((await listAllModels(apiKey)).find((item) => item?.id === DIRECTOR_MODEL && (!item.status || item.status === 'active')));
+    } catch { models = Object.entries(FALLBACK_MODELS).map(([id, value]) => ({ id, label: value.label })); }
+    return { beta: true, configured: status.configured, suffix: status.suffix, apiBase: API_BASE, endpoint: IMAGE_ENDPOINT, models, directorModel: DIRECTOR_MODEL, directorAvailable };
   } catch (error) {
-    return { beta: true, configured: false, models: [], error: error.message };
+    return { beta: true, configured: false, models: [], directorModel: DIRECTOR_MODEL, directorAvailable: false, error: error.message };
   }
 }
 
@@ -78,7 +96,12 @@ async function saveApiKey(secrets, apiKey) {
 }
 
 async function clearApiKey(secrets) { await secrets.remove(SECRET_NAME); return getStatus(secrets); }
-async function testConnection(secrets) { const apiKey = await requireApiKey(secrets); const models = await listImageModels(apiKey); return { ok: true, provider: 'kiraai', beta: true, models }; }
+async function testConnection(secrets) {
+  const apiKey = await requireApiKey(secrets);
+  const models = await listImageModels(apiKey);
+  const director = await assertDirectorModelAvailable(apiKey, DIRECTOR_MODEL);
+  return { ok: true, provider: 'kiraai', beta: true, models, director };
+}
 
 function normalizeAspectRatio(value) { const ratio = String(value || '').trim(); return ALLOWED_ASPECT_RATIOS.has(ratio) ? ratio : '1:1'; }
 function aspectRatioFromDimensions(width, height) {
@@ -100,86 +123,29 @@ async function writeOutput(source, outputPath) {
   await fs.writeFile(outputPath, Buffer.from(await response.arrayBuffer()));
 }
 
-const ANALYSIS_SYSTEM_PROMPT = `You are a prepress image analyst. Inspect the supplied image and return strict JSON only, without markdown. Use this schema exactly: {"image_type":"photo|poster|packaging|illustration|mixed","composition":"","main_subjects":[],"object_positions":[],"background":"","lighting":"","materials":[],"color_palette":[],"style":"","camera_or_perspective":"","text_regions":[],"logo_regions":[],"details_to_improve":[],"elements_to_preserve":[],"risk_flags":[]}. Be concrete, visual and production-oriented. Do not invent content that is not visible.`;
+const DIRECTOR_SYSTEM_PROMPT = `You are a senior print-production reconstruction director. Analyze the supplied reference image and return strict JSON only. Decide whether the source is a photo, product photo, illustration, poster, packaging artwork, logo, or text-heavy graphic. Your job is to protect fidelity, not merely describe style. Record exact visual hierarchy, relative positions, scale relationships, perspective, lighting, materials, palette, negative space, text zones, logo zones, icon zones, and details that must not change. For text-heavy artwork, explicitly mark full-frame generation as high risk. JSON schema: {"image_type":"","risk_level":"low|medium|high","recommended_pipeline":"full_rebuild|image_area_only|faithful_upscale_only","composition":"","subjects":[],"object_positions":[],"background":"","lighting":"","materials":[],"color_palette":[],"style":"","perspective":"","text_regions":[],"logo_regions":[],"icon_regions":[],"preserve":[],"improve":[],"forbidden":[],"generation_prompt":""}. The generation_prompt must be production-ready English, highly specific, and must not request readable text or logo recreation; use clean placeholders for those protected regions.`;
 
-function parseAnalysisJson(content) {
-  const raw = String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-  try {
-    const parsed = JSON.parse(raw);
-    return {
-      image_type: parsed.image_type || 'mixed',
-      composition: parsed.composition || '',
-      main_subjects: Array.isArray(parsed.main_subjects) ? parsed.main_subjects : [],
-      object_positions: Array.isArray(parsed.object_positions) ? parsed.object_positions : [],
-      background: parsed.background || '',
-      lighting: parsed.lighting || '',
-      materials: Array.isArray(parsed.materials) ? parsed.materials : [],
-      color_palette: Array.isArray(parsed.color_palette) ? parsed.color_palette : [],
-      style: parsed.style || '',
-      camera_or_perspective: parsed.camera_or_perspective || '',
-      text_regions: Array.isArray(parsed.text_regions) ? parsed.text_regions : [],
-      logo_regions: Array.isArray(parsed.logo_regions) ? parsed.logo_regions : [],
-      details_to_improve: Array.isArray(parsed.details_to_improve) ? parsed.details_to_improve : [],
-      elements_to_preserve: Array.isArray(parsed.elements_to_preserve) ? parsed.elements_to_preserve : [],
-      risk_flags: Array.isArray(parsed.risk_flags) ? parsed.risk_flags : []
-    };
-  } catch {
-    throw new Error(`Kira Vision trả về JSON không hợp lệ: ${raw.slice(0, 800)}`);
-  }
+function parseDirectorJson(raw) {
+  const text = String(raw || '').trim().replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
+  try { return JSON.parse(text); }
+  catch { throw new Error(`GPT-5.4 không trả về JSON hợp lệ: ${text.slice(0, 1200)}`); }
 }
 
-async function analyzeReferenceImage(apiKey, inputPath) {
+async function buildReconstructionPrompt(apiKey, inputPath, userPrompt, mode = 'safe', directorModelId = DIRECTOR_MODEL) {
+  await assertDirectorModelAvailable(apiKey, directorModelId);
   const bytes = await fs.readFile(inputPath);
   const dataUri = `data:${mimeFromPath(inputPath)};base64,${bytes.toString('base64')}`;
+  const modeInstruction = mode === 'creative' ? 'Allow moderate reinterpretation only where fidelity is not critical.' : mode === 'balanced' ? 'Improve detail while staying close to the source.' : 'Use maximum fidelity and minimize invented detail.';
   const response = await fetchWithTimeout(`${API_BASE}${CHAT_ENDPOINT}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'kira-3.5-flash',
-      stream: false,
-      temperature: 0.1,
-      max_tokens: 2200,
-      messages: [
-        { role: 'system', content: ANALYSIS_SYSTEM_PROMPT },
-        { role: 'user', content: [{ type: 'text', text: 'Analyze this reference image for high-quality reconstruction.' }, { type: 'image_url', image_url: { url: dataUri } }] }
-      ]
-    })
-  }, 120000);
-  if (!response.ok) throw new Error(`KiraAI Vision: ${await readError(response)}`);
+    method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: directorModelId, stream: false, temperature: 0.1, max_tokens: 2600, messages: [{ role: 'system', content: DIRECTOR_SYSTEM_PROMPT }, { role: 'user', content: [{ type: 'text', text: `${modeInstruction}\nAdditional user request: ${String(userPrompt || '').trim() || 'None'}` }, { type: 'image_url', image_url: { url: dataUri } }] }] })
+  }, 180000);
+  if (!response.ok) throw new Error(`KiraAI GPT-5.4 Director: ${await readError(response)}`);
   const data = await response.json();
-  return parseAnalysisJson(data?.choices?.[0]?.message?.content);
-}
-
-function buildReconstructionPrompt(analysis, userPrompt = '', mode = 'safe') {
-  const modeInstruction = mode === 'creative'
-    ? 'Allow moderate creative reinterpretation while preserving the main visual identity and composition.'
-    : mode === 'balanced'
-      ? 'Improve detail and realism naturally while staying close to the source.'
-      : 'Stay extremely close to the source. Minimize invented details and preserve geometry rigorously.';
-  const list = (value) => Array.isArray(value) && value.length ? value.join('; ') : 'none specified';
-  const isArtwork = ['poster', 'packaging', 'mixed'].includes(String(analysis.image_type || '').toLowerCase());
-  return [
-    'Reconstruct the reference visual as a high-quality, production-ready image.',
-    modeInstruction,
-    `Image type: ${analysis.image_type}.`,
-    `Composition: ${analysis.composition}.`,
-    `Main subjects: ${list(analysis.main_subjects)}.`,
-    `Object placement: ${list(analysis.object_positions)}.`,
-    `Background: ${analysis.background}.`,
-    `Lighting: ${analysis.lighting}.`,
-    `Materials and surfaces: ${list(analysis.materials)}.`,
-    `Dominant color palette: ${list(analysis.color_palette)}.`,
-    `Visual style: ${analysis.style}.`,
-    `Camera or perspective: ${analysis.camera_or_perspective}.`,
-    `Preserve exactly: ${list(analysis.elements_to_preserve)}.`,
-    `Improve carefully: ${list(analysis.details_to_improve)}.`,
-    'Preserve the original composition, object proportions, perspective, visual hierarchy, dominant colors, lighting direction and subject identity.',
-    'Improve natural texture, material definition, tonal separation, edge clarity and perceived resolution without oversharpening, plastic surfaces or synthetic noise.',
-    'Do not add unrelated objects, redesign the layout, change the crop, alter the palette, or invent decorative content.',
-    isArtwork ? `The source contains text or logo regions: ${list([...analysis.text_regions, ...analysis.logo_regions])}. Preserve their geometry as clean placeholders only; do not invent readable lettering or redraw brand marks because those elements will be restored separately.` : '',
-    analysis.risk_flags?.length ? `Avoid these risks: ${list(analysis.risk_flags)}.` : '',
-    String(userPrompt || '').trim() ? `Additional user instruction: ${String(userPrompt).trim()}` : ''
-  ].filter(Boolean).join('\n');
+  const analysis = parseDirectorJson(data?.choices?.[0]?.message?.content);
+  const generatedPrompt = String(analysis?.generation_prompt || '').trim();
+  if (!generatedPrompt) throw new Error('GPT-5.4 không trả về generation_prompt.');
+  return { analysis, generatedPrompt, directorModelId };
 }
 
 async function enhance({ secureSecretsService, inputPath, outputPath, options = {}, onProgress }) {
@@ -189,18 +155,19 @@ async function enhance({ secureSecretsService, inputPath, outputPath, options = 
   const selected = models.find((item) => item.id === options.modelId) || models[0] || { id: 'kira-3.0-image', label: 'Kira 3.0 Image' };
   const aspectRatio = normalizeAspectRatio(options.aspectRatio || aspectRatioFromDimensions(options.inputWidth, options.inputHeight));
 
-  onProgress?.({ status: 'analyzing', message: 'Kira Vision đang phân tích cấu trúc ảnh...' });
-  const analysis = await analyzeReferenceImage(apiKey, inputPath);
-  onProgress?.({ status: 'prompting', message: 'App đang tạo prompt tái dựng tối ưu...', analysis });
-  const generatedPrompt = buildReconstructionPrompt(analysis, options.prompt, options.rebuildMode || 'safe');
-  const payload = { model: selected.id, prompt: generatedPrompt, aspect_ratio: aspectRatio };
+  onProgress?.({ status: 'analyzing', message: 'GPT-5.4 đang phân tích ảnh và quyết định pipeline...' });
+  const director = await buildReconstructionPrompt(apiKey, inputPath, options.prompt, options.rebuildMode || 'safe', DIRECTOR_MODEL);
+  if (director.analysis?.recommended_pipeline === 'faithful_upscale_only' && options.forceCreativeRebuild !== true) {
+    throw new Error(`GPT-5.4 đánh giá ảnh này không nên tái dựng toàn khung (${director.analysis?.risk_level || 'high risk'}). Khuyến nghị: faithful upscale only. Bật ép Creative Rebuild chỉ khi chấp nhận thay đổi bố cục, chữ và logo.`);
+  }
+  const payload = { model: selected.id, prompt: director.generatedPrompt, aspect_ratio: aspectRatio };
 
-  onProgress?.({ status: 'uploading', message: `Đang gửi prompt tái dựng tới ${selected.label}...`, generatedPrompt, analysis });
+  onProgress?.({ status: 'uploading', message: `Đang gửi prompt do GPT-5.4 tạo tới ${selected.label}...`, generatedPrompt: director.generatedPrompt, analysis: director.analysis });
   const response = await fetchWithTimeout(`${API_BASE}${IMAGE_ENDPOINT}`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, 180000);
   if (!response.ok) throw new Error(`KiraAI Image: ${await readError(response)} | payload=${JSON.stringify(payload)}`);
-  onProgress?.({ status: 'processing', message: 'KiraAI.vn đang tái dựng ảnh...' });
+  onProgress?.({ status: 'processing', message: 'KiraAI.vn đang tạo ảnh từ chỉ đạo của GPT-5.4...' });
   const data = await response.json(); const output = extractOutput(data); await writeOutput(output.source, outputPath);
-  return { outputPath, modelId: selected.id, modelLabel: selected.label, aspectRatio, endpoint: IMAGE_ENDPOINT, analysis, generatedPrompt, beta: true, referenceImageUsed: false, sourceAnalyzedByVision: true, promptBuiltInternally: true };
+  return { outputPath, modelId: selected.id, modelLabel: selected.label, aspectRatio, endpoint: IMAGE_ENDPOINT, generatedPrompt: director.generatedPrompt, analysis: director.analysis, directorModel: DIRECTOR_MODEL, beta: true, referenceImageUsed: false, sourceAnalyzedByVision: true };
 }
 
-module.exports = { API_BASE, ALLOWED_ASPECT_RATIOS, CHAT_ENDPOINT, IMAGE_ENDPOINT, MODELS_ENDPOINT, SECRET_NAME, analyzeReferenceImage, aspectRatioFromDimensions, buildReconstructionPrompt, clearApiKey, enhance, extractOutput, getStatus, listImageModels, normalizeAspectRatio, parseAnalysisJson, saveApiKey, testConnection };
+module.exports = { API_BASE, ALLOWED_ASPECT_RATIOS, CHAT_ENDPOINT, DIRECTOR_MODEL, IMAGE_ENDPOINT, MODELS_ENDPOINT, SECRET_NAME, aspectRatioFromDimensions, assertDirectorModelAvailable, buildReconstructionPrompt, clearApiKey, enhance, extractOutput, getStatus, listAllModels, listImageModels, normalizeAspectRatio, saveApiKey, testConnection };
