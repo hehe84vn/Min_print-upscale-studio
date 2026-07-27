@@ -10,7 +10,9 @@ const PROTECTED_CHANNELS = new Set([
   'production:start',
   'benchmark:run',
   'model-studio:preview',
-  'color:convert'
+  'color:convert',
+  'krea-beta:enhance',
+  'kiraai-beta:enhance'
 ]);
 
 const originalHandle = ipcMain.handle.bind(ipcMain);
@@ -104,4 +106,6 @@ app.whenReady().then(async () => {
 
 require('./modelStudioV15Ipc');
 require('./updateManagerIpc');
+require('./kreaBetaIpc');
+require('./kiraAiBetaIpc');
 require('./main');

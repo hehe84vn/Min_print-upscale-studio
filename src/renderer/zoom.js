@@ -25,5 +25,7 @@
     .then(() => loadScript('update-manager-v19-extension.js'))
     .then(() => loadScript('production-polish-v19-ui.js'))
     .then(() => loadScript('license-ui.js'))
+    .then(() => loadScript('krea-beta-ui.js'))
+    .then(() => loadScript('kiraai-beta-ui.js'))
     .catch((error) => console.error('Renderer extension loader:', error));
 })();
