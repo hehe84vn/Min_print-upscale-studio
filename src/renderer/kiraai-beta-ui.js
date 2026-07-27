@@ -7,7 +7,7 @@
     if ($id('kiraAiSettingsCard')) return;
     const anchor = document.querySelector('.advanced-details'); if (!anchor) return;
     const card = document.createElement('section'); card.id = 'kiraAiSettingsCard'; card.className = 'krea-beta-settings-card';
-    card.innerHTML = `<h3>KiraAI.vn Beta</h3><p>AI Rebuild thử nghiệm: Kira Vision phân tích ảnh nguồn, tạo prompt tái dựng, sau đó gọi model ảnh đang hoạt động từ /api/v1/models.</p><div class="setting-group"><label for="kiraAiApiKeyInput">KiraAI API key</label><input id="kiraAiApiKeyInput" class="text-input" type="password" autocomplete="off" spellcheck="false" placeholder="Nhập API key KiraAI.vn" /><small id="kiraAiKeyStatus" class="krea-beta-status">Đang kiểm tra...</small></div><div class="krea-beta-actions"><button id="saveKiraAiKeyBtn" class="primary" type="button">Lưu key</button><button id="testKiraAiKeyBtn" class="secondary" type="button">Kiểm tra kết nối</button><button id="clearKiraAiKeyBtn" class="danger-text" type="button">Xóa key</button></div>`;
+    card.innerHTML = `<h3>KiraAI.vn Beta</h3><p>AI Rebuild tự động: Kira Vision phân tích ảnh nguồn thành JSON, app tạo prompt tái dựng nội bộ, sau đó gọi model ảnh đang hoạt động từ /api/v1/models.</p><div class="setting-group"><label for="kiraAiApiKeyInput">KiraAI API key</label><input id="kiraAiApiKeyInput" class="text-input" type="password" autocomplete="off" spellcheck="false" placeholder="Nhập API key KiraAI.vn" /><small id="kiraAiKeyStatus" class="krea-beta-status">Đang kiểm tra...</small></div><div class="krea-beta-actions"><button id="saveKiraAiKeyBtn" class="primary" type="button">Lưu key</button><button id="testKiraAiKeyBtn" class="secondary" type="button">Kiểm tra kết nối</button><button id="clearKiraAiKeyBtn" class="danger-text" type="button">Xóa key</button></div>`;
     anchor.before(card);
   }
 
@@ -28,7 +28,7 @@
     if ($id('kiraAiGenerationNotice')) return;
     const modelGroup = $id('aiModelSelect')?.closest('.setting-group'); if (!modelGroup) return;
     const notice = document.createElement('div'); notice.id = 'kiraAiGenerationNotice'; notice.className = 'krea-provider-note'; notice.hidden = true;
-    notice.textContent = 'AI Rebuild: ảnh nguồn được Kira Vision phân tích để tạo prompt, sau đó model ảnh sinh lại một ảnh mới cùng tỷ lệ gần nhất. Không phải upscale pixel-faithful. Chữ và logo có thể thay đổi.';
+    notice.textContent = 'AI Rebuild tự động: ảnh nguồn → Vision JSON → prompt nội bộ → model ảnh. Ô “Yêu cầu bổ sung” là tùy chọn, không bắt buộc. Đây không phải upscale pixel-faithful; chữ và logo có thể thay đổi.';
     modelGroup.insertAdjacentElement('afterend', notice);
   }
 
@@ -38,7 +38,10 @@
     if (!active) return;
     renderModels();
     const sizeSetting = $id('aiSizeSetting'); if (sizeSetting) sizeSetting.hidden = true;
-    if ($id('runBtn') && typeof state !== 'undefined' && state.tool === 'ai-enhance') $id('runBtn').textContent = 'Tái dựng bằng KiraAI';
+    const promptLabel = $id('customPrompt')?.closest('.setting-group')?.querySelector('label');
+    if (promptLabel) promptLabel.textContent = 'Yêu cầu bổ sung · tùy chọn';
+    if ($id('customPrompt')) $id('customPrompt').placeholder = 'Có thể để trống. App sẽ tự phân tích ảnh và tạo prompt tái dựng.';
+    if ($id('runBtn') && typeof state !== 'undefined' && state.tool === 'ai-enhance') $id('runBtn').textContent = 'Tự động tái dựng bằng KiraAI';
   }
 
   function showStatus(status, message, error = false) {
@@ -67,13 +70,13 @@
     try {
       const result = await window.studio.runKiraAiBetaEnhance({ inputPath: state.inputPath, outputPath: state.outputPath, options: { modelId: $id('aiModelSelect').value, prompt: $id('customPrompt')?.value.trim() || '', rebuildMode: rebuildMode(), inputWidth: dimensions.width, inputHeight: dimensions.height } });
       $id('progressBar').style.width = '100%'; $id('progressText').textContent = 'KiraAI.vn đã hoàn tất tái dựng.';
-      $id('resultBox').classList.remove('error'); $id('resultBox').textContent = `Đã lưu ảnh tái dựng ${result.modelLabel} · tỷ lệ ${result.aspectRatio}: ${result.outputPath}`; $id('resultBox').hidden = false; await showComparison(result.outputPath);
+      $id('resultBox').classList.remove('error'); $id('resultBox').textContent = `Đã lưu ảnh tái dựng ${result.modelLabel} · tỷ lệ ${result.aspectRatio} · prompt tự động: ${result.promptBuiltInternally ? 'có' : 'không'}: ${result.outputPath}`; $id('resultBox').hidden = false; await showComparison(result.outputPath);
     } catch (error) { $id('resultBox').classList.add('error'); $id('resultBox').textContent = error.message || String(error); $id('resultBox').hidden = false; }
     finally { providerState.running = false; $id('runBtn').disabled = !state.inputPath; }
   }
 
   installSettings(); installProvider(); ensureNotice();
   $id('saveKiraAiKeyBtn')?.addEventListener('click', saveKey); $id('testKiraAiKeyBtn')?.addEventListener('click', testKey); $id('clearKiraAiKeyBtn')?.addEventListener('click', clearKey); $id('appSettingsBtn')?.addEventListener('click', loadStatus); $id('jobProviderSelect')?.addEventListener('change', syncUi); $id('runBtn')?.addEventListener('click', run, true);
-  window.studio.onKiraAiBetaProgress?.((progress) => { if (!providerState.running) return; if (progress?.message) $id('progressText').textContent = progress.message; const values = { preparing: 5, analyzing: 25, uploading: 50, processing: 75, completed: 100 }; if (values[progress?.status]) $id('progressBar').style.width = `${values[progress.status]}%`; });
+  window.studio.onKiraAiBetaProgress?.((progress) => { if (!providerState.running) return; if (progress?.message) $id('progressText').textContent = progress.message; const values = { preparing: 5, analyzing: 20, prompting: 40, uploading: 55, processing: 80, completed: 100 }; if (values[progress?.status]) $id('progressBar').style.width = `${values[progress.status]}%`; });
   loadStatus(); syncUi();
 })();
