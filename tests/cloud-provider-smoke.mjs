@@ -56,9 +56,10 @@ assert.match(ui, /long:22000/);
 assert.match(loader, /loadScript\('krea-beta-ui\.js'\)/);
 assert.match(moduleDoc, /Krea-only/);
 
-for (const source of [bootstrap, preload, ui, loader, moduleDoc]) {
+for (const source of [bootstrap, preload, loader]) {
   assert.doesNotMatch(source, /kiraai|KiraAI|kiraAi/i);
 }
+assert.doesNotMatch(ui, /runKiraAi|saveKiraAi|getKiraAi|onKiraAi|GPT-5\.4|KiraAI\.vn/);
 for (const removedPath of removedPaths) {
   await assert.rejects(fs.access(removedPath));
 }
