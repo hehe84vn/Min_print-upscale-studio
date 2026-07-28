@@ -285,6 +285,24 @@
     }
   }
 
+  function expectedOutputExtension(format) {
+    if (format === 'jpg' || format === 'jpeg') return '.jpg';
+    if (format === 'tiff') return '.tif';
+    if (format === 'webp') return '.webp';
+    return '.png';
+  }
+
+  async function ensureKreaOutputPath() {
+    const outputFormat = $id('formatSelect')?.value || 'png';
+    const extension = expectedOutputExtension(outputFormat);
+    const current = String(state.outputPath || '').toLowerCase();
+    if (current.endsWith(extension) || (extension === '.jpg' && current.endsWith('.jpeg')) || (extension === '.tif' && current.endsWith('.tiff'))) return true;
+    const selected = await window.studio.selectKreaBetaOutput({ inputPath: state.inputPath, outputFormat });
+    if (!selected) return false;
+    state.outputPath = selected;
+    return true;
+  }
+
   async function runKreaAsProvider(event) {
     if ($id('jobProviderSelect')?.value !== 'krea' || typeof state === 'undefined' || state.tool !== 'ai-enhance') return;
     event.preventDefault();
@@ -298,8 +316,7 @@
       $id('resultBox').hidden = false;
       return;
     }
-    if (!state.outputPath) await chooseOutput();
-    if (!state.outputPath) return;
+    if (!(await ensureKreaOutputPath())) return;
 
     kreaState.running = true;
     $id('runBtn').disabled = true;
@@ -315,7 +332,7 @@
         options: {
           presetId: $id('aiModelSelect').value,
           ...selectedSizing(),
-          regenerationMode: selectedMode(),
+          regenerationMode: selectedPreset().risk === 'creative' ? 'creative' : 'safe',
           prompt: $id('customPrompt').value,
           protectFace: $id('protectFace').checked,
           protectText: $id('protectText').checked,
